@@ -10,14 +10,14 @@ from typing import Any
 
 import pytest
 from django.contrib import admin
-from django.test import Client
+from django.test import Client, RequestFactory
 from django.urls import reverse
 
 from accounts.models import User
 from tenancy.context import tenant_context
 from tenancy.models import Membership, Tenant, TenantModel
-from tenancy.permissions import Permission
-from tests.isolation.registry import ADMIN_MARKER_FIELDS, FACTORIES
+from tenancy.permissions import Permission, Principal, set_request_principal
+from tests.isolation.registry import ADMIN_MARKER_FIELDS, FACTORIES, READ_ONLY_ADMINS
 
 pytestmark = [pytest.mark.isolation, pytest.mark.django_db(transaction=True)]
 
@@ -30,6 +30,27 @@ def tenant_admin_models() -> list[type[TenantModel]]:
     """
     found = [m for m in admin.site._registry if issubclass(m, TenantModel) and not m._meta.abstract]
     return sorted(found, key=lambda m: m.__name__)
+
+
+def admin_is_read_only(model_admin: "admin.ModelAdmin[Any]") -> bool:
+    """Tell whether an admin refuses add, change and delete to a superuser holding everything.
+
+    Args:
+        model_admin: Admin instance to probe, inside a tenant so the tenant guard is not what
+            refuses.
+
+    Returns:
+        True when none of add, change and delete is allowed.
+    """
+    request = RequestFactory().get("/")
+    request.user = User(is_active=True, is_superuser=True)
+    set_request_principal(request, Principal(uuid.uuid4(), frozenset(Permission)))
+    with tenant_context(uuid.uuid4()):
+        return not (
+            model_admin.has_add_permission(request)
+            or model_admin.has_change_permission(request)
+            or model_admin.has_delete_permission(request)
+        )
 
 
 def listed_pks(response: Any) -> list[object]:
@@ -89,6 +110,26 @@ class Scenario:
         user = User.objects.create_superuser(f"{role}-user", f"{role}@example.com", "pw")
         Membership.objects.create(user=user, tenant=tenant, role=role)
         self.client.force_login(user)
+
+    @property
+    def read_only(self) -> bool:
+        """Tell whether the admin under test is registered as read-only.
+
+        Returns:
+            True when the model is in READ_ONLY_ADMINS.
+        """
+        return self.model in READ_ONLY_ADMINS
+
+    def needle(self, row: TenantModel) -> str:
+        """Pick text that identifies a row on a rendered admin page.
+
+        Args:
+            row: Row to identify.
+
+        Returns:
+            The value of the model's marker field, which is unique per row.
+        """
+        return str(getattr(row, ADMIN_MARKER_FIELDS.get(self.model, "name")))
 
     def writer_role(self) -> Membership.Role:
         """Pick the least privileged role that holds the admin's write permission.
@@ -189,6 +230,64 @@ def test_admin_models_are_covered() -> None:
     assert tenant_admin_models()
 
 
+def test_the_read_only_registry_matches_the_admins() -> None:
+    """Every read-only admin is registered as such, and every registered one is read-only.
+
+    A read-only admin missing from READ_ONLY_ADMINS would have its write cases fail loudly
+    instead of being skipped, and a stale entry would hide a writable admin.
+    """
+    registered = set(tenant_admin_models())
+    assert registered >= READ_ONLY_ADMINS
+    read_only = {m for m in registered if admin_is_read_only(admin.site._registry[m])}
+    assert read_only == READ_ONLY_ADMINS
+
+
+def test_the_read_only_probe_tells_writable_and_read_only_admins_apart() -> None:
+    """The probe is False for a default admin and True once the write permissions are refused."""
+
+    class Locked(admin.ModelAdmin):  # type: ignore[type-arg]
+        """Admin that refuses every write."""
+
+        def has_add_permission(self, request: Any) -> bool:
+            """Refuse adding.
+
+            Args:
+                request: Current request.
+
+            Returns:
+                False.
+            """
+            return False
+
+        def has_change_permission(self, request: Any, obj: Any = None) -> bool:
+            """Refuse changing.
+
+            Args:
+                request: Current request.
+                obj: Object being changed, if any.
+
+            Returns:
+                False.
+            """
+            return False
+
+        def has_delete_permission(self, request: Any, obj: Any = None) -> bool:
+            """Refuse deleting.
+
+            Args:
+                request: Current request.
+                obj: Object being deleted, if any.
+
+            Returns:
+                False.
+            """
+            return False
+
+    model = next(iter(FACTORIES))
+    assert not admin_is_read_only(admin.ModelAdmin(model, admin.site))
+    assert admin_is_read_only(Locked(model, admin.site))
+
+
 def test_changelist_shows_only_the_active_tenants_rows(scenario: Scenario) -> None:
     """A's row is listed and B's is not.
 
@@ -199,13 +298,16 @@ def test_changelist_shows_only_the_active_tenants_rows(scenario: Scenario) -> No
     response = scenario.client.get(scenario.url("changelist"))
     assert listed_pks(response) == [scenario.a_row.pk]
     body = response.content.decode()
-    assert str(scenario.a_row) in body
-    assert str(scenario.b_row) not in body
+    assert scenario.needle(scenario.a_row) in body
+    assert scenario.needle(scenario.b_row) not in body
 
 
 @pytest.mark.parametrize("kind", ["change", "delete", "history"])
 def test_foreign_object_views_do_not_render(scenario: Scenario, kind: str) -> None:
     """B's change, delete and history pages are not reachable and never show B's data.
+
+    A read-only admin answers 403 to the delete page, because Django checks the delete
+    permission before it looks the object up; every other page redirects.
 
     Args:
         scenario: Admin scenario for one tenant model.
@@ -213,12 +315,16 @@ def test_foreign_object_views_do_not_render(scenario: Scenario, kind: str) -> No
     """
     scenario.activate(scenario.a.pk)
     url = scenario.url(kind, scenario.b_row)
-    assert scenario.client.get(url).status_code == 302
-    assert str(scenario.b_row) not in scenario.client.get(url, follow=True).content.decode()
+    expected = 403 if scenario.read_only and kind == "delete" else 302
+    assert scenario.client.get(url).status_code == expected
+    body = scenario.client.get(url, follow=True).content.decode()
+    assert scenario.needle(scenario.b_row) not in body
 
 
 def test_posts_to_foreign_rows_change_nothing_but_own_rows_still_work(scenario: Scenario) -> None:
     """Change and delete POSTs aimed at B leave it untouched, while the same POSTs work for A.
+
+    For a read-only admin the POSTs aimed at A are refused too and A's row is left unchanged.
 
     Args:
         scenario: Admin scenario for one tenant model.
@@ -229,7 +335,14 @@ def test_posts_to_foreign_rows_change_nothing_but_own_rows_still_work(scenario: 
     scenario.client.post(scenario.url("change", scenario.b_row), data)
     scenario.client.post(scenario.url("delete", scenario.b_row), {"post": "yes"})
     assert scenario.snapshot(scenario.b, scenario.b_row) == before
-    scenario.client.post(scenario.url("change", scenario.a_row), data)
+    own_before = scenario.snapshot(scenario.a, scenario.a_row)
+    change = scenario.client.post(scenario.url("change", scenario.a_row), data)
+    if scenario.read_only:
+        assert change.status_code == 403
+        delete = scenario.client.post(scenario.url("delete", scenario.a_row), {"post": "yes"})
+        assert delete.status_code == 403
+        assert scenario.snapshot(scenario.a, scenario.a_row) == own_before
+        return
     changed = scenario.snapshot(scenario.a, scenario.a_row)
     assert changed is not None
     assert "hijacked" in {str(v) for v in changed.values()}
@@ -283,11 +396,20 @@ def test_viewer_can_view_but_not_write(scenario: Scenario) -> None:
 def test_a_writer_can_write(scenario: Scenario) -> None:
     """A role holding the admin's write permission keeps full access to the tenant model.
 
+    For a read-only admin even that role is refused every write and the row survives.
+
     Args:
         scenario: Admin scenario for one tenant model.
     """
     scenario.login_as(scenario.writer_role(), scenario.a)
     scenario.activate(scenario.a.pk)
+    if scenario.read_only:
+        before = scenario.snapshot(scenario.a, scenario.a_row)
+        assert scenario.client.get(scenario.url("add")).status_code == 403
+        delete = scenario.client.post(scenario.url("delete", scenario.a_row), {"post": "yes"})
+        assert delete.status_code == 403
+        assert scenario.snapshot(scenario.a, scenario.a_row) == before
+        return
     assert scenario.client.get(scenario.url("add")).status_code == 200
     scenario.client.post(scenario.url("delete", scenario.a_row), {"post": "yes"})
     assert scenario.snapshot(scenario.a, scenario.a_row) is None

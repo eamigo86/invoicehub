@@ -11,7 +11,7 @@ from django.http import HttpRequest
 from tenancy.admin import TenantModelAdmin
 from tenancy.permissions import Permission, request_principal
 
-from .models import Customer, Product, TaxRate
+from .models import AuditEvent, Customer, Product, TaxRate
 from .services import (
     delete_customer,
     delete_product,
@@ -207,3 +207,59 @@ class ProductAdmin(TenantModelAdmin):
         """
         for product in queryset:
             delete_product(request_principal(request), product)
+
+
+@admin.register(AuditEvent)
+class AuditEventAdmin(TenantModelAdmin):
+    """Read-only admin for the active tenant's audit log; no one adds, changes or deletes events."""
+
+    list_display = ("created_at", "actor", "action", "entity", "entity_id")
+    list_filter = ("action", "actor_kind")
+    list_select_related = ("actor_user", "actor_token")
+
+    @admin.display(description="Actor")
+    def actor(self, obj: AuditEvent) -> str:
+        """Name who acted, falling back to the kind when the user or token is gone.
+
+        Args:
+            obj: Event being listed.
+
+        Returns:
+            The username or token name, or the actor kind.
+        """
+        return str(obj.actor_user or obj.actor_token or obj.get_actor_kind_display())
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        """Refuse adding events, which only record_event creates.
+
+        Args:
+            request: Current request.
+
+        Returns:
+            False.
+        """
+        return False
+
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        """Refuse changing events, so the log stays as it was written.
+
+        Args:
+            request: Current request.
+            obj: Object being changed, if any.
+
+        Returns:
+            False.
+        """
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        """Refuse deleting events, so the log is append-only.
+
+        Args:
+            request: Current request.
+            obj: Object being deleted, if any.
+
+        Returns:
+            False.
+        """
+        return False
