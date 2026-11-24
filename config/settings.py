@@ -10,6 +10,7 @@ from pathlib import Path
 import environ  # type: ignore[import-untyped]
 
 from config.mail import build_mailers
+from core.roles import validate_role_name
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -23,7 +24,7 @@ DEBUG: bool = env.bool("DEBUG", default=False)
 ALLOWED_HOSTS: list[str] = env.list("ALLOWED_HOSTS", default=[])
 
 DATABASES = {"default": env.db("DATABASE_URL")}
-DATABASE_APP_ROLE: str = env("DATABASE_APP_ROLE", default="invoicehub_app")
+DATABASE_APP_ROLE: str = validate_role_name(env("DATABASE_APP_ROLE", default="invoicehub_app"))
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 CELERY_BROKER_URL: str = env("CELERY_BROKER_URL", default="redis://localhost:6390/0")

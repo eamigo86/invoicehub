@@ -76,3 +76,32 @@ def test_missing_secret_key_fails() -> None:
     result = run_settings({"DATABASE_URL": "postgres://u:p@h:1/d"})
     assert result.returncode != 0
     assert "ImproperlyConfigured" in result.stderr
+
+
+def test_env_file_override_is_read(tmp_path: Path) -> None:
+    """ENV_FILE points the settings at a dotenv file whose values are used.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+    dotenv = tmp_path / "custom.env"
+    dotenv.write_text(
+        "SECRET_KEY=from-file\nDATABASE_URL=postgres://u:p@filehost:1/filedb\nDEBUG=1\n"
+    )
+    env = {
+        "PATH": os.environ["PATH"],
+        "ENV_FILE": str(dotenv),
+        "DJANGO_SETTINGS_MODULE": "config.settings",
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", DUMP],
+        env=env,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["db"]["HOST"] == "filehost"
+    assert data["debug"] is True
