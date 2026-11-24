@@ -137,7 +137,7 @@ def make_invoice_series() -> TenantModel:
         The saved series.
     """
     series: TenantModel = InvoiceSeries.objects.create(
-        kind=Invoice.Kind.INVOICE, prefix="INV-", year=2026
+        kind=Invoice.Kind.INVOICE, prefix=f"P{uuid.uuid4().hex[:8]}-", year=2026
     )
     return series
 
@@ -160,6 +160,7 @@ ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {
     Product: "name",
     AuditEvent: "action",
     Invoice: "customer",
+    InvoiceSeries: "prefix",
 }
 """Plain text field of each model's admin form that the isolation tests overwrite with a marker.
 
@@ -373,6 +374,7 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.services.save_draft",
         "billing.services.delete_draft",
         "billing.services.issue_invoice",
+        "billing.services.save_series",
     }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.

@@ -14,7 +14,7 @@ import uuid
 import zoneinfo
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -492,7 +492,7 @@ def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
         raise ValidationError(f"The issuer details are incomplete: {', '.join(missing)}.")
     before = _snapshot(stored)
     now = timezone.now()
-    today = now.astimezone(zoneinfo.ZoneInfo(tenant.timezone)).date()
+    today = _local_date(tenant, now)
     series, number, reference = _next_reference(stored.kind, today.year)
     customer = stored.customer
     stored.series, stored.number, stored.year, stored.reference = (
@@ -531,3 +531,44 @@ def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
     after = _snapshot(stored) | {"reference": reference}
     record_event(principal, "invoice.issued", "invoice", stored.pk, before, after)
     return stored
+
+
+def _local_date(tenant: Tenant, moment: datetime) -> date:
+    """Convert a moment to the calendar day it is in the timezone of a tenant.
+
+    Args:
+        tenant: Tenant whose timezone decides the day.
+        moment: Timezone-aware moment.
+
+    Returns:
+        The local date.
+    """
+    return moment.astimezone(zoneinfo.ZoneInfo(tenant.timezone)).date()
+
+
+def save_series(principal: Principal | None, series: InvoiceSeries) -> InvoiceSeries:
+    """Create an invoice series, or change the prefix of an existing one.
+
+    A new series starts at number 1 in the current year of the tenant timezone. For an existing
+    series only the prefix is written, so the counter and the year can never be edited; the
+    stored counter, year and kind replace whatever the instance carried. ValidationError is
+    raised for invalid data, including a second series of a kind the tenant already has.
+
+    Args:
+        principal: Acting principal, who needs settings:manage or PermissionDenied is raised.
+        series: Series to persist.
+
+    Returns:
+        The saved series, carrying the stored counter.
+    """
+    require_permission(principal, Permission.SETTINGS_MANAGE)
+    if series.pk is None:
+        tenant = Tenant.objects.get(pk=require_current_tenant_id())
+        series.year, series.next_number = _local_date(tenant, timezone.now()).year, 1
+        _clean(series)
+        series.save()
+    else:
+        series.refresh_from_db(fields=["kind", "year", "next_number"])
+        _clean(series)
+        series.save(update_fields=["prefix"])
+    return series
