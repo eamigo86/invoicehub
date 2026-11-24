@@ -12,6 +12,7 @@ from unfold.admin import ModelAdmin, TabularInline  # type: ignore[import-untype
 from unfold.decorators import action  # type: ignore[import-untyped]
 
 from tenancy.context import get_current_tenant_id, parse_tenant_id
+from tenancy.permissions import Permission, has_permission, request_principal
 
 from .models import Membership, Tenant
 
@@ -20,8 +21,17 @@ class TenantModelAdmin(ModelAdmin):  # type: ignore[misc]
     """Base admin for tenant models, refused entirely while no tenant is active.
 
     Without an active tenant the default manager would raise TenantNotSet, so the model is
-    left out of the index and every URL answers 403 instead.
+    left out of the index and every URL answers 403 instead. On top of Django's model
+    permissions the acting principal needs read_permission to view and write_permission to add,
+    change or delete; subclasses override them, for example with reconciliation:write.
+
+    Attributes:
+        read_permission: Permission required to view rows.
+        write_permission: Permission required to add, change or delete rows.
     """
+
+    read_permission = Permission.INVOICES_READ
+    write_permission = Permission.INVOICES_WRITE
 
     def get_queryset(self, request: HttpRequest) -> QuerySet[Any]:
         """Return the model's rows, refusing the request while no tenant is active.
@@ -92,7 +102,51 @@ class TenantModelAdmin(ModelAdmin):  # type: ignore[misc]
         Returns:
             True when a tenant is active and the user may add.
         """
-        return get_current_tenant_id() is not None and bool(super().has_add_permission(request))
+        allowed = has_permission(request_principal(request), self.write_permission)
+        return (
+            allowed
+            and get_current_tenant_id() is not None
+            and bool(super().has_add_permission(request))
+        )
+
+    def has_view_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        """Require the read permission in addition to Django's view permission.
+
+        Args:
+            request: Current request.
+            obj: Object being viewed, if any.
+
+        Returns:
+            True when the principal may read and Django allows the view.
+        """
+        allowed = has_permission(request_principal(request), self.read_permission)
+        return allowed and bool(super().has_view_permission(request, obj))
+
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        """Require the write permission in addition to Django's change permission.
+
+        Args:
+            request: Current request.
+            obj: Object being changed, if any.
+
+        Returns:
+            True when the principal may write and Django allows the change.
+        """
+        allowed = has_permission(request_principal(request), self.write_permission)
+        return allowed and bool(super().has_change_permission(request, obj))
+
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        """Require the write permission in addition to Django's delete permission.
+
+        Args:
+            request: Current request.
+            obj: Object being deleted, if any.
+
+        Returns:
+            True when the principal may write and Django allows the delete.
+        """
+        allowed = has_permission(request_principal(request), self.write_permission)
+        return allowed and bool(super().has_delete_permission(request, obj))
 
 
 class MembershipInline(TabularInline):  # type: ignore[misc]

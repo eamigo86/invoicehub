@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from django.core.exceptions import PermissionDenied
+from django.http import HttpRequest
 
 from tenancy.models import Membership
 
@@ -78,3 +79,32 @@ def require_permission(principal: Principal | None, permission: Permission) -> N
     """
     if not has_permission(principal, permission):
         raise PermissionDenied(f"missing permission {permission}")
+
+
+_PRINCIPAL_ATTR = "tenant_principal"
+
+
+def set_request_principal(request: HttpRequest, principal: Principal | None) -> None:
+    """Attach the acting principal to a request.
+
+    Stored under a private attribute name so that the typed accessors are the only readers.
+
+    Args:
+        request: Request that is being served.
+        principal: Principal of the member acting in the active tenant, or None.
+    """
+    setattr(request, _PRINCIPAL_ATTR, principal)
+
+
+def request_principal(request: HttpRequest) -> Principal | None:
+    """Read the principal attached to a request.
+
+    Args:
+        request: Request that is being served.
+
+    Returns:
+        The principal set by the tenant middleware, or None when none was set or the request
+        has no tenant or member.
+    """
+    principal: Principal | None = getattr(request, _PRINCIPAL_ATTR, None)
+    return principal
