@@ -1,12 +1,15 @@
 """Billing models."""
 
+import uuid
+
 from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
+from django.contrib.postgres.functions import RandomUUID
 from django.core.serializers.json import DjangoJSONEncoder
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
-from core.models import PostalAddress
+from core.models import Currency, PostalAddress
 from tenancy.models import TenantModel
 
 
@@ -161,3 +164,140 @@ class AuditEvent(TenantModel):
             A label such as invoice.issued on invoice 1c2d.
         """
         return f"{self.action} on {self.entity} {self.entity_id}"
+
+
+class Invoice(TenantModel):
+    """An invoice or credit note, drafted and then issued; issued invoices are immutable.
+
+    Overdue is never stored: it is derived from the due date and the balance. The identifier
+    is a UUID, so the audit log can reference it.
+
+    Attributes:
+        id: Primary key.
+        kind: Whether this is an invoice or a credit note.
+        status: Lifecycle state of the document.
+        customer: Who is invoiced.
+        currency: Currency of every amount on the document.
+        issue_date: Day the invoice was issued, set when issuing.
+        due_date: Day payment is due, set when issuing.
+        notes: Free text shown on the document.
+        subtotal: Sum of the line nets, in cents.
+        tax_total: Sum of every line tax, in cents.
+        total: Subtotal plus tax total, in cents.
+        created_at: When the draft was created.
+        updated_at: When the document last changed.
+    """
+
+    class Kind(models.TextChoices):
+        """The kinds of document."""
+
+        INVOICE = "invoice"
+        CREDIT_NOTE = "credit_note"
+
+    class Status(models.TextChoices):
+        """The stored lifecycle states."""
+
+        DRAFT = "draft"
+        ISSUED = "issued"
+        SENT = "sent"
+        PARTIALLY_PAID = "partially_paid"
+        PAID = "paid"
+        VOIDED = "voided"
+
+    id = models.UUIDField(
+        primary_key=True, default=uuid.uuid4, db_default=RandomUUID(), editable=False
+    )
+    kind = models.CharField(max_length=12, choices=Kind, default=Kind.INVOICE)
+    status = models.CharField(max_length=14, choices=Status, default=Status.DRAFT)
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
+    currency = models.CharField(max_length=3, choices=Currency)
+    issue_date = models.DateField(null=True, blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    subtotal = models.BigIntegerField(default=0)
+    tax_total = models.BigIntegerField(default=0)
+    total = models.BigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        """Describe the invoice by customer and status.
+
+        Returns:
+            A label such as Acme draft invoice.
+        """
+        return f"{self.customer} {self.status} {self.kind}"
+
+
+class InvoiceLine(TenantModel):
+    """One priced line of an invoice, with amounts stored in cents.
+
+    Attributes:
+        invoice: Invoice the line belongs to.
+        position: Order of the line within the invoice.
+        product: Catalog entry the line was prefilled from, if any.
+        description: What is being charged.
+        quantity: Amount of units, with up to three decimals.
+        unit_price: Price of one unit in cents.
+        discount_bp: Line discount in basis points.
+        net: Amount after discount and before tax, in cents.
+        total: Net plus the line taxes, in cents.
+    """
+
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name="lines")
+    position = models.PositiveSmallIntegerField()
+    product = models.ForeignKey(Product, null=True, blank=True, on_delete=models.SET_NULL)
+    description = models.CharField(max_length=500)
+    quantity = models.DecimalField(
+        max_digits=12, decimal_places=3, validators=[MinValueValidator(0)]
+    )
+    unit_price = models.BigIntegerField(validators=[MinValueValidator(0)])
+    discount_bp = models.PositiveIntegerField(default=0, validators=[MaxValueValidator(10000)])
+    net = models.BigIntegerField(default=0)
+    total = models.BigIntegerField(default=0)
+
+    class Meta:
+        """Model options."""
+
+        ordering = ["position"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "invoice", "position"], name="invoiceline_tenant_position_uniq"
+            )
+        ]
+
+    def __str__(self) -> str:
+        """Return the line description.
+
+        Returns:
+            The description of the line.
+        """
+        return self.description
+
+
+class InvoiceLineTax(TenantModel):
+    """A tax applied to a line, with the name and rate copied from the configured tax rate.
+
+    The snapshot keeps the invoice stable when the tax rate is later edited or deleted.
+
+    Attributes:
+        line: Line the tax applies to.
+        tax_rate: The configured rate it came from, cleared if that rate is deleted.
+        name: Name of the rate when the tax was calculated.
+        rate_bp: Rate in basis points when the tax was calculated.
+        amount: Tax on the line net, in cents.
+    """
+
+    line = models.ForeignKey(InvoiceLine, on_delete=models.CASCADE, related_name="taxes")
+    tax_rate = models.ForeignKey(TaxRate, null=True, blank=True, on_delete=models.SET_NULL)
+    name = models.CharField(max_length=100)
+    rate_bp = models.PositiveIntegerField()
+    amount = models.BigIntegerField()
+
+    def __str__(self) -> str:
+        """Describe the tax by name and rate.
+
+        Returns:
+            A label such as Austin 825 bp.
+        """
+        return f"{self.name} {self.rate_bp} bp"

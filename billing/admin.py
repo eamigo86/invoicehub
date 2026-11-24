@@ -7,11 +7,12 @@ from django.core.exceptions import ValidationError
 from django.db.models import QuerySet
 from django.forms import ModelForm, ModelMultipleChoiceField
 from django.http import HttpRequest
+from unfold.admin import TabularInline  # type: ignore[import-untyped]
 
 from tenancy.admin import TenantModelAdmin
 from tenancy.permissions import Permission, request_principal
 
-from .models import AuditEvent, Customer, Product, TaxRate
+from .models import AuditEvent, Customer, Invoice, InvoiceLine, Product, TaxRate
 from .services import (
     delete_customer,
     delete_product,
@@ -254,6 +255,101 @@ class AuditEventAdmin(TenantModelAdmin):
 
     def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
         """Refuse deleting events, so the log is append-only.
+
+        Args:
+            request: Current request.
+            obj: Object being deleted, if any.
+
+        Returns:
+            False.
+        """
+        return False
+
+
+class ReadOnlyInline(TabularInline):  # type: ignore[misc]
+    """Tabular inline that shows rows and refuses to add, change or delete any."""
+
+    extra = 0
+    can_delete = False
+
+    def has_add_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        """Refuse adding rows.
+
+        Args:
+            request: Current request.
+            obj: Parent object, if any.
+
+        Returns:
+            False.
+        """
+        return False
+
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        """Refuse changing rows.
+
+        Args:
+            request: Current request.
+            obj: Parent object, if any.
+
+        Returns:
+            False.
+        """
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        """Refuse deleting rows.
+
+        Args:
+            request: Current request.
+            obj: Parent object, if any.
+
+        Returns:
+            False.
+        """
+        return False
+
+
+class InvoiceLineInline(ReadOnlyInline):
+    """The lines of an invoice, read-only."""
+
+    model = InvoiceLine
+    fields = ("position", "description", "quantity", "unit_price", "discount_bp", "net", "total")
+
+
+@admin.register(Invoice)
+class InvoiceAdmin(TenantModelAdmin):
+    """Read-only admin for the active tenant's invoices; services draft and issue them."""
+
+    list_display = ("id", "kind", "status", "customer", "currency", "total", "issue_date")
+    list_filter = ("kind", "status")
+    list_select_related = ("customer",)
+    inlines = [InvoiceLineInline]
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        """Refuse adding invoices, which only the services create.
+
+        Args:
+            request: Current request.
+
+        Returns:
+            False.
+        """
+        return False
+
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        """Refuse changing invoices, so stored amounts cannot drift from the services.
+
+        Args:
+            request: Current request.
+            obj: Object being changed, if any.
+
+        Returns:
+            False.
+        """
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        """Refuse deleting invoices, which only the services remove.
 
         Args:
             request: Current request.
