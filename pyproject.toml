@@ -21,6 +21,7 @@ package = false
 [dependency-groups]
 dev = [
     "django-stubs[compatible-mypy]>=6.1.2",
+    "hypothesis>=6.170.17",
     "mypy>=2.4.1",
     "pre-commit>=4.7.0",
     "pytest>=9.2.0",
