@@ -17,7 +17,7 @@ from django.urls import reverse
 
 from accounts.models import User
 from tenancy.context import tenant_context
-from tenancy.models import Tenant, TenantModel
+from tenancy.models import Membership, Tenant, TenantModel
 from tests.isolation.registry import FACTORIES
 
 pytestmark = [pytest.mark.isolation, pytest.mark.django_db(transaction=True)]
@@ -66,7 +66,7 @@ def listed_pks(response: Any) -> list[object]:
 
 
 class Scenario:
-    """Two tenants owning one row each of a model, and a client logged in as a superuser.
+    """Two tenants owning one row each of a model, and a client logged in as owner of both.
 
     Attributes:
         model: Tenant model under test.
@@ -75,6 +75,7 @@ class Scenario:
         a_row: Row owned by A.
         b_row: Row owned by B.
         client: Logged in test client with no session tenant yet.
+        root: Superuser behind the client, an owner of both tenants.
     """
 
     def __init__(self, model: type[TenantModel], client: Client) -> None:
@@ -92,7 +93,21 @@ class Scenario:
         with tenant_context(self.b.pk):
             self.b_row = FACTORIES[model]()
         self.client = client
-        client.force_login(User.objects.create_superuser("root", "root@example.com", "pw"))
+        self.root = User.objects.create_superuser("root", "root@example.com", "pw")
+        for tenant in (self.a, self.b):
+            Membership.objects.create(user=self.root, tenant=tenant, role=Membership.Role.OWNER)
+        client.force_login(self.root)
+
+    def login_as(self, role: Membership.Role, tenant: Tenant) -> None:
+        """Log in as a new superuser holding a single membership.
+
+        Args:
+            role: Role of the membership.
+            tenant: Tenant the user belongs to.
+        """
+        user = User.objects.create_superuser(f"{role}-user", f"{role}@example.com", "pw")
+        Membership.objects.create(user=user, tenant=tenant, role=role)
+        self.client.force_login(user)
 
     def url(self, kind: str, row: TenantModel | None = None) -> str:
         """Build an admin URL of the model.
@@ -233,3 +248,50 @@ def test_activate_action_is_refused_for_non_superusers(client: Client) -> None:
     client.force_login(staff)
     assert client.post(f"/admin/tenancy/tenant/{scenario.a.pk}/activate/").status_code == 403
     assert "tenant_id" not in client.session
+
+
+def test_member_of_another_tenant_cannot_reach_a_forged_session_tenant(scenario: Scenario) -> None:
+    """A member of A whose session names B sees nothing of B and the key is dropped.
+
+    Args:
+        scenario: Admin scenario for one tenant model.
+    """
+    scenario.login_as(Membership.Role.OWNER, scenario.a)
+    scenario.activate(scenario.b.pk)
+    assert scenario.client.get(scenario.url("changelist")).status_code == 403
+    assert scenario.client.get(scenario.url("change", scenario.b_row)).status_code == 403
+    assert "tenant_id" not in scenario.client.session
+    assert scenario.snapshot(scenario.b, scenario.b_row) is not None
+
+
+def test_viewer_can_view_but_not_write(scenario: Scenario) -> None:
+    """A viewer lists and opens rows but cannot add, change or delete them.
+
+    Args:
+        scenario: Admin scenario for one tenant model.
+    """
+    scenario.login_as(Membership.Role.VIEWER, scenario.a)
+    scenario.activate(scenario.a.pk)
+    before = scenario.snapshot(scenario.a, scenario.a_row)
+    assert scenario.client.get(scenario.url("changelist")).status_code == 200
+    assert scenario.client.get(scenario.url("change", scenario.a_row)).status_code == 200
+    assert scenario.client.get(scenario.url("add")).status_code == 403
+    data = hostile_data(scenario.model)
+    assert scenario.client.post(scenario.url("add"), data).status_code == 403
+    assert scenario.client.post(scenario.url("change", scenario.a_row), data).status_code == 403
+    delete = scenario.url("delete", scenario.a_row)
+    assert scenario.client.post(delete, {"post": "yes"}).status_code == 403
+    assert scenario.snapshot(scenario.a, scenario.a_row) == before
+
+
+def test_accountant_can_write(scenario: Scenario) -> None:
+    """An accountant keeps full access to the admin of the tenant model.
+
+    Args:
+        scenario: Admin scenario for one tenant model.
+    """
+    scenario.login_as(Membership.Role.ACCOUNTANT, scenario.a)
+    scenario.activate(scenario.a.pk)
+    assert scenario.client.get(scenario.url("add")).status_code == 200
+    scenario.client.post(scenario.url("delete", scenario.a_row), {"post": "yes"})
+    assert scenario.snapshot(scenario.a, scenario.a_row) is None

@@ -16,7 +16,7 @@ import billing.admin
 from accounts.models import User
 from billing.models import Customer
 from tenancy.context import tenant_context
-from tenancy.models import Tenant
+from tenancy.models import Membership, Tenant
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -24,7 +24,7 @@ LIST_URL = "/admin/billing/customer/"
 
 
 def login(client: Client, tenant_id: uuid.UUID | None) -> None:
-    """Log a superuser in and store the active tenant in the session.
+    """Log in an owner of the tenant and store it as the active tenant in the session.
 
     Args:
         client: Test client to prepare.
@@ -33,6 +33,7 @@ def login(client: Client, tenant_id: uuid.UUID | None) -> None:
     user = User.objects.create_superuser("root", "root@example.com", "pw")
     client.force_login(user)
     if tenant_id is not None:
+        Membership.objects.create(user=user, tenant_id=tenant_id, role=Membership.Role.OWNER)
         session = client.session
         session["tenant_id"] = str(tenant_id)
         session.save()
