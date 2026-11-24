@@ -12,12 +12,13 @@ from tenancy.models import Membership, Tenant
 
 
 def test_permission_values_are_the_documented_scopes() -> None:
-    """The permission values are exactly the four documented strings."""
+    """The permission values are exactly the five documented strings."""
     assert [p.value for p in permissions.Permission] == [
         "invoices:read",
         "invoices:write",
         "reconciliation:write",
         "tokens:manage",
+        "settings:manage",
     ]
 
 
@@ -27,15 +28,24 @@ def test_every_role_has_an_entry_in_the_matrix() -> None:
 
 
 def test_the_role_matrix() -> None:
-    """Owner and admin hold all, accountant everything but tokens, viewer read only."""
+    """Owner and admin hold all, accountant only invoicing, viewer read only."""
     everything = frozenset(permissions.Permission)
     read = permissions.Permission.INVOICES_READ
     assert permissions.ROLE_PERMISSIONS[Membership.Role.OWNER] == everything
     assert permissions.ROLE_PERMISSIONS[Membership.Role.ADMIN] == everything
     assert permissions.ROLE_PERMISSIONS[Membership.Role.ACCOUNTANT] == everything - {
-        permissions.Permission.TOKENS_MANAGE
+        permissions.Permission.TOKENS_MANAGE,
+        permissions.Permission.SETTINGS_MANAGE,
     }
     assert permissions.ROLE_PERMISSIONS[Membership.Role.VIEWER] == {read}
+
+
+def test_settings_manage_is_for_owner_and_admin_and_never_a_token_scope() -> None:
+    """Only owner and admin manage settings, and no API token can carry that permission."""
+    manage = permissions.Permission.SETTINGS_MANAGE
+    assert manage not in permissions.TOKEN_SCOPES
+    held = {role for role, perms in permissions.ROLE_PERMISSIONS.items() if manage in perms}
+    assert held == {Membership.Role.OWNER, Membership.Role.ADMIN}
 
 
 @pytest.mark.django_db

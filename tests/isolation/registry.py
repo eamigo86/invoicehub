@@ -197,7 +197,11 @@ def service_functions(module_name: str) -> list[str]:
 
 
 SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
-    {"billing.services.save_customer", "billing.services.delete_customer"}
+    {
+        "billing.services.save_customer",
+        "billing.services.delete_customer",
+        "billing.services.update_issuer",
+    }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.
 

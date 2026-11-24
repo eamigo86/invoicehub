@@ -18,6 +18,7 @@ class Permission(StrEnum):
     INVOICES_WRITE = "invoices:write"
     RECONCILIATION_WRITE = "reconciliation:write"
     TOKENS_MANAGE = "tokens:manage"
+    SETTINGS_MANAGE = "settings:manage"
 
 
 ROLE_PERMISSIONS: dict[Membership.Role, frozenset[Permission]] = {

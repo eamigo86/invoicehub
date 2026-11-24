@@ -37,3 +37,17 @@ def test_superuser_can_open_tenant_changelist(client: Client) -> None:
     client.force_login(admin_user)
     response = client.get("/admin/tenancy/tenant/")
     assert response.status_code == 200
+
+
+def test_tenant_admin_form_shows_the_issuer_fields(client: Client) -> None:
+    """The tenant change page offers every issuer field.
+
+    Args:
+        client: Django test client fixture.
+    """
+    client.force_login(User.objects.create_superuser("root", "root@example.com", "pw"))
+    tenant = Tenant.objects.create(name="Acme")
+    form = client.get(f"/admin/tenancy/tenant/{tenant.pk}/change/").context["adminform"].form
+    assert {"legal_name", "ein", "default_currency", "timezone", "city", "country"} <= set(
+        form.fields
+    )

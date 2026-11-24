@@ -1,10 +1,10 @@
 """Customer services, the single write path for views, the admin and later the API."""
 
 import pytest
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 
 from billing.models import Customer
-from billing.services import delete_customer, save_customer
+from billing.services import delete_customer, save_customer, update_issuer
 from tenancy.context import tenant_context
 from tenancy.models import Tenant
 from tenancy.permissions import Permission, Principal
@@ -90,3 +90,61 @@ def test_no_principal_is_refused() -> None:
     tenant = Tenant.objects.create(name="A")
     with tenant_context(tenant.pk), pytest.raises(PermissionDenied):
         save_customer(None, Customer(name="Acme"))
+
+
+def manager(tenant: Tenant) -> Principal:
+    """Build a principal that may manage settings, like an owner.
+
+    Args:
+        tenant: Tenant the principal acts in.
+
+    Returns:
+        The principal.
+    """
+    return Principal(tenant.pk, frozenset(Permission))
+
+
+def test_update_issuer_saves_the_issuer_fields() -> None:
+    """An owner updates legal name, EIN, address, currency and timezone."""
+    tenant = Tenant.objects.create(name="A")
+    with tenant_context(tenant.pk):
+        tenant.legal_name = "A LLC"
+        tenant.ein = "12-3456789"
+        tenant.city = "Austin"
+        tenant.default_currency = "CAD"
+        tenant.timezone = "America/Toronto"
+        update_issuer(manager(tenant), tenant)
+    stored = Tenant.objects.get(pk=tenant.pk)
+    assert (stored.legal_name, stored.ein, stored.city) == ("A LLC", "12-3456789", "Austin")
+    assert (stored.default_currency, stored.timezone) == ("CAD", "America/Toronto")
+
+
+def test_update_issuer_cannot_change_the_tenant_name() -> None:
+    """Only issuer columns are written, so a changed name is not persisted."""
+    tenant = Tenant.objects.create(name="A")
+    with tenant_context(tenant.pk):
+        tenant.name = "Renamed"
+        tenant.legal_name = "A LLC"
+        update_issuer(manager(tenant), tenant)
+    stored = Tenant.objects.get(pk=tenant.pk)
+    assert (stored.name, stored.legal_name) == ("A", "A LLC")
+
+
+def test_update_issuer_rejects_invalid_data() -> None:
+    """A malformed EIN raises ValidationError and nothing is stored."""
+    tenant = Tenant.objects.create(name="A")
+    with tenant_context(tenant.pk):
+        tenant.ein = "nope"
+        with pytest.raises(ValidationError):
+            update_issuer(manager(tenant), tenant)
+    assert Tenant.objects.get(pk=tenant.pk).ein == ""
+
+
+def test_update_issuer_needs_settings_manage() -> None:
+    """An accountant holding invoices:write is refused."""
+    tenant = Tenant.objects.create(name="A")
+    with tenant_context(tenant.pk):
+        tenant.legal_name = "A LLC"
+        with pytest.raises(PermissionDenied):
+            update_issuer(writer(tenant), tenant)
+    assert Tenant.objects.get(pk=tenant.pk).legal_name == ""
