@@ -8,6 +8,7 @@ import uuid
 from collections.abc import Callable
 
 from django.apps import apps
+from django.apps.registry import Apps
 
 from billing.models import Customer
 from tenancy.models import TenantModel
@@ -38,3 +39,32 @@ def concrete_tenant_models() -> list[type[TenantModel]]:
         if issubclass(m, TenantModel) and not m._meta.abstract and not m._meta.proxy
     ]
     return sorted(found, key=lambda m: m.__name__)
+
+
+BUSINESS_APPS = ("billing", "reconciliation", "assistant")
+"""Apps whose models hold business data; add every future business app here."""
+
+NON_TENANT_ALLOWLIST: frozenset[str] = frozenset()
+"""Labels such as billing.country of models deliberately shared by all tenants."""
+
+
+def non_tenant_models(registry: Apps = apps, labels: tuple[str, ...] = BUSINESS_APPS) -> list[str]:
+    """List business models that are not tenant models and are not allowlisted.
+
+    Auto-created many-to-many through tables are included, so a business model cannot use an
+    implicit through table and has to declare an explicit tenant-scoped one.
+
+    Args:
+        registry: App registry to inspect.
+        labels: Business app labels to inspect, which must all be installed in the registry.
+
+    Returns:
+        The labels of the offending models, ordered.
+    """
+    offenders = [
+        model._meta.label
+        for label in labels
+        for model in registry.get_app_config(label).get_models(include_auto_created=True)
+        if not issubclass(model, TenantModel) and model._meta.label not in NON_TENANT_ALLOWLIST
+    ]
+    return sorted(offenders)

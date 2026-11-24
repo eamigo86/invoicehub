@@ -153,6 +153,57 @@ def test_saving_a_foreign_instance_is_refused(world: World) -> None:
         world.b_row.save()
 
 
+def test_update_moving_own_row_to_another_tenant_is_rejected(world: World) -> None:
+    """Row-Level Security rejects an UPDATE that would hand A's own row to B.
+
+    PostgreSQL also requires the new row to pass the USING expression for an UPDATE that
+    filters, so WITH CHECK is not the only line of defence here; the raw INSERT test isolates it.
+
+    Args:
+        world: Two tenants with one row each.
+    """
+    with tenant_context(world.a.pk):
+        with pytest.raises(ProgrammingError) as caught, transaction.atomic():
+            world.model._base_manager.filter(pk=world.a_row.pk).update(tenant_id=world.b.pk)
+        assert isinstance(caught.value.__cause__, errors.InsufficientPrivilege)
+        assert world.model.objects.get(pk=world.a_row.pk).tenant_id == world.a.pk
+
+
+def test_bulk_create_for_another_tenant_is_rejected(world: World) -> None:
+    """bulk_create skips save, so only Row-Level Security stops a row carrying B's tenant.
+
+    The ORM inserts with RETURNING, which also needs the new row to pass USING; the raw INSERT
+    test isolates WITH CHECK.
+
+    The same clone for A is accepted first, which shows the harness itself works.
+
+    Args:
+        world: Two tenants with one row each.
+    """
+
+    def clone(tenant_id: object) -> TenantModel:
+        """Copy A's row as a new unsaved instance owned by a given tenant.
+
+        Args:
+            tenant_id: Tenant to assign to the copy.
+
+        Returns:
+            The unsaved copy.
+        """
+        copy = world.model._base_manager.get(pk=world.a_row.pk)
+        copy.pk = None
+        copy._state.adding = True
+        copy.tenant_id = tenant_id  # type: ignore[assignment]
+        return copy
+
+    with tenant_context(world.a.pk):
+        world.model._base_manager.bulk_create([clone(world.a.pk)])
+        with pytest.raises(ProgrammingError) as caught, transaction.atomic():
+            world.model._base_manager.bulk_create([clone(world.b.pk)])
+        assert isinstance(caught.value.__cause__, errors.InsufficientPrivilege)
+        assert world.model._base_manager.count() == 2
+
+
 @ROLES
 def test_raw_select_update_delete_of_foreign_rows_affect_nothing(
     world: World, role: str | None
