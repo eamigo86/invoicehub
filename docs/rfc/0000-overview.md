@@ -18,7 +18,7 @@ InvoiceHub is a multi-tenant invoicing SaaS for SMBs and freelancers that issues
 
 | Metric | Target |
 | --- | --- |
-| Live demo with sample data | Accessible without sign-up, with a demo tenant that resets every night |
+| Live demo with sample data | Accessible without sign-up, with a demo tenant of fictitious US data (Faker) that resets every night |
 | From zero to invoice sent | < 2 minutes for a new user |
 | Automatic reconciliation | ≥ 85 % of payments matched without intervention on the demo dataset |
 | Repo quality | Green CI, coverage ≥ 85 %, README with architecture and benchmarks |
@@ -31,7 +31,7 @@ v1 covers the full lifecycle of an invoice, from creation to reconciled payment;
 **In v1**
 
 - Company (tenant) registration, user invitations and roles
-- Customers, products/services and configurable tax types
+- Customers, products/services and configurable tax rates
 - Invoices and credit notes with gap-free numbering per series
 - Invoice PDF and delivery by email
 - Bank statement import in CSV and reconciliation with remitmatch
@@ -42,6 +42,7 @@ v1 covers the full lifecycle of an invoice, from creation to reconciled payment;
 **Out of v1**
 
 - Legal e-invoicing for a specific country (Verifactu, CFDI, Peppol)
+- Sales tax compliance: per-state rules, nexus, exemption certificates and automatic rate lookup (the tenant configures its own rates)
 - Online payments (Stripe) and recurring subscriptions
 - Full accounting (general ledger, balance sheets)
 - Real-time bank connection (Plaid, open banking)
@@ -106,10 +107,12 @@ Django as the core because it is where the most experience is and what best solv
 | Deployment | Docker, Cloud Run, Cloud SQL, Memorystore | 0007 |
 | Observability | OpenTelemetry, Sentry, structured logs | 0007 |
 | Quality | pytest, ruff, mypy, pre-commit, GitHub Actions | 0007 |
+| Demo and seed data | Faker (`en_US`, fixed seed) | 0007 |
 
 **Cross-cutting decisions**
 
 - **Money:** integers in cents (`BigIntegerField`) + currency code; never `float`.
+- **Market:** North America first. USD by default, the EIN as the business tax ID, sales tax as configurable tax rates, and credit notes for corrections. InvoiceHub calculates the rates the tenant configures; it does not promise tax compliance.
 - **Dates:** always timezone-aware; the tenant's timezone is used only for display.
 - **Idempotency:** every Celery task and every mutation with external effects (email, import) carries an idempotency key.
 - **Audit:** actions on invoices are recorded (who, what, when), including those by the AI.
