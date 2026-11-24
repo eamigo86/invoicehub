@@ -1,7 +1,7 @@
 """Billing models."""
 
 from django.contrib.postgres.fields import ArrayField
-from django.core.validators import MaxValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 from core.models import PostalAddress
@@ -55,3 +55,57 @@ class TaxRate(TenantModel):
             The display name of the tax rate.
         """
         return self.name
+
+
+class Product(TenantModel):
+    """A catalog entry that prefills invoice lines; a line can also be free-form.
+
+    Attributes:
+        name: Label shown to users.
+        description: Optional longer text.
+        unit_price: Price in cents, in the default currency of the tenant.
+        default_taxes: Tax rates a new line of this product starts with.
+    """
+
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    unit_price = models.BigIntegerField(
+        validators=[MinValueValidator(0)],
+        help_text="Price in cents, for example 1999 for 19.99.",
+    )
+    default_taxes = models.ManyToManyField(TaxRate, through="ProductTaxRate", blank=True)
+
+    def __str__(self) -> str:
+        """Return the product name.
+
+        Returns:
+            The display name of the product.
+        """
+        return self.name
+
+
+class ProductTaxRate(TenantModel):
+    """Link between a product and one of its default tax rates.
+
+    An explicit through model, because an implicit one would carry no tenant.
+    """
+
+    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    tax_rate = models.ForeignKey(TaxRate, on_delete=models.CASCADE)
+
+    class Meta:
+        """Model options."""
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "product", "tax_rate"], name="producttaxrate_tenant_pair_uniq"
+            )
+        ]
+
+    def __str__(self) -> str:
+        """Describe the link by product and tax rate.
+
+        Returns:
+            A label such as Widget / Austin.
+        """
+        return f"{self.product} / {self.tax_rate}"
