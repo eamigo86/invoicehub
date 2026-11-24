@@ -34,10 +34,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
-RUN uv sync --frozen --no-dev
+RUN uv sync --locked --no-dev
 RUN useradd --create-home --uid 1000 app
-COPY --chown=app:app . .
-COPY --from=tailwind --chown=app:app /src/static/css/app.css static/css/app.css
+COPY . .
+COPY --from=tailwind /src/static/css/app.css static/css/app.css
 USER app
 ENV PORT=8000
 EXPOSE 8000
