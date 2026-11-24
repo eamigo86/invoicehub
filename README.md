@@ -81,11 +81,15 @@ uv run pytest --cov              # needs the Compose postgres and redis running
 uv run pre-commit install        # optional: run the checks on every commit
 ```
 
+Host-side commands (pytest, migrate, runserver) connect as the migrator, which owns the tables;
+`FORCE ROW LEVEL SECURITY` keeps the tenant policies applying to it as well.
+
 ## Status
 
 Early development. The project scaffold, Docker stack, database roles, tooling and CI are in
-place; the tenancy foundation (tenant model, scoped manager, Row-Level Security and the isolation
-test suite) is in progress.
+place; the tenancy foundation is in progress: the tenant registry, request-scoped tenant context,
+tenant-scoped base model and Row-Level Security are done, with `Customer` as the first protected
+model; the full isolation test suite is next.
 
 ## License
 
