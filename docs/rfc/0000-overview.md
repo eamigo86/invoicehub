@@ -35,7 +35,7 @@ v1 covers the full lifecycle of an invoice, from creation to reconciled payment;
 - Invoices and credit notes with gap-free numbering per series
 - Invoice PDF and delivery by email
 - Bank statement import in CSV and reconciliation with remitmatch
-- AI assistant: create invoices from natural language, questions about the data, explanation of doubtful reconciliations
+- AI assistant: invoice drafts from text or email, questions about the business, explanation of ambiguous reconciliations, collections (dunning) reminder drafts and tax rate or product suggestions (RFC 0006)
 - GraphQL API (django-graphex) and MCP server
 - Public demo deployed on GCP
 
