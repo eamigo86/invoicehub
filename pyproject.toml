@@ -32,6 +32,7 @@ dev = [
 target-version = "py313"
 line-length = 100
 extend-exclude = ["migrations"]
+force-exclude = true
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "D", "DOC201", "DOC202", "DOC402", "DOC403", "DOC501", "DOC502"]
