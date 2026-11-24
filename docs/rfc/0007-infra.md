@@ -8,9 +8,9 @@ A single Docker image is deployed to Cloud Run as both the web service and the C
 
 | Environment | Where | Data |
 | --- | --- | --- |
-| Local | Docker Compose: web, worker, Postgres, Redis, Mailpit | Seed with 2 sample tenants |
+| Local | Docker Compose: web, worker, Postgres, Redis, Mailpit | Seed with 2 fictitious US tenants generated with Faker |
 | CI | GitHub Actions with Postgres and Redis services | Fixtures + isolation suite |
-| Production (demo) | GCP: Cloud Run, Cloud SQL, managed Redis, GCS | Demo tenant that resets every night |
+| Production (demo) | GCP: Cloud Run, Cloud SQL, managed Redis, GCS | Demo tenant with Faker data (USD, sales tax, EIN) that resets every night |
 
 ## Deployment on GCP
 

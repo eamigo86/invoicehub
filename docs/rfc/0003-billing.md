@@ -8,10 +8,10 @@ An issued invoice is immutable: it is numbered consecutively with no gaps within
 
 | Entity | Key fields | Notes |
 | --- | --- | --- |
-| `Tenant` | legal name, NIF/EIN, address, default currency and timezone | Issuer data copied to each invoice |
-| `Customer` | name, tax ID, emails, address | Copied to the invoice when issued (snapshot) |
+| `Tenant` | legal name, EIN, address, default currency (USD) and timezone | Issuer data copied to each invoice |
+| `Customer` | name, optional tax ID (e.g. EIN), emails, address | Copied to the invoice when issued (snapshot) |
 | `Product` | name, unit price in cents, default tax | Optional catalog; a line can be free-form |
-| `TaxRate` | name, percentage in basis points, type (VAT, withholding) | Configurable per tenant |
+| `TaxRate` | name, percentage in basis points | Configurable per tenant (e.g. a state or local sales tax) |
 | `InvoiceSeries` | prefix, next number, reset year | One per type: regular, credit note |
 | `Invoice` | series, number, status, dates, currency, totals, original invoice (if credit note) | Totals calculated and stored |
 | `InvoiceLine` | description, quantity, unit price, discount, taxes | Per-line rounding, documented |
@@ -66,9 +66,10 @@ class InvoiceIssuer:
 
 ## Taxes and rounding
 
-- Amounts in cents; percentages in basis points (21 % = 2100).
+- Amounts in cents; percentages in basis points (8.25 % = 825).
 - Tax calculated per line and rounded half up; the total is the sum of the lines. A property test checks that the total always adds up.
-- Multiple rates per line (e.g. VAT + withholding) with a per-rate breakdown in the PDF.
+- Multiple rates per line (e.g. state + county sales tax) with a per-rate breakdown in the PDF.
+- Rates are configured by the tenant: InvoiceHub does not decide which rates apply (nexus, exemptions, product taxability) and does not promise tax compliance.
 
 ## PDFs and files
 
