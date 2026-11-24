@@ -1,5 +1,7 @@
 """Meta-tests that keep the isolation suite complete as models are added."""
 
+from pathlib import Path
+
 import pytest
 from celery import Celery
 from django.contrib import admin
@@ -22,6 +24,7 @@ from tests.isolation.registry import (
     project_service_functions,
     project_task_names,
     project_url_names,
+    service_functions,
     unprotected_tenant_fk_models,
 )
 
@@ -215,6 +218,24 @@ def test_service_discovery_finds_own_functions_and_skips_imports_and_missing_mod
     assert project_service_functions(labels=("billing", "assistant")) == [
         n for n in names if n.startswith("billing.")
     ]
+
+
+def test_service_discovery_walks_the_submodules_of_a_services_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A services package is walked, so functions re-exported from submodules are not lost.
+
+    Args:
+        tmp_path: Directory where a sample services package is written.
+        monkeypatch: Fixture that puts the directory on the import path.
+    """
+    package = tmp_path / "sampleapp" / "services"
+    package.mkdir(parents=True)
+    (tmp_path / "sampleapp" / "__init__.py").write_text("")
+    (package / "__init__.py").write_text("from .invoices import issue\n")
+    (package / "invoices.py").write_text("def issue():\n    pass\n\n\ndef _helper():\n    pass\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert service_functions("sampleapp.services") == ["sampleapp.services.invoices.issue"]
 
 
 def test_every_celery_task_has_isolation_cases() -> None:

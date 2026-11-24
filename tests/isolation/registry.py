@@ -7,6 +7,7 @@ gets its isolation cases: the parametrized suite runs against whatever this regi
 import importlib
 import importlib.util
 import inspect
+import pkgutil
 import uuid
 from collections.abc import Callable, Sequence
 
@@ -166,15 +167,33 @@ def project_service_functions(
     names: list[str] = []
     for label in labels:
         module_name = f"{registry.get_app_config(label).name}.services"
-        if importlib.util.find_spec(module_name) is None:
-            continue
-        module = importlib.import_module(module_name)
-        names.extend(
-            f"{module_name}.{name}"
-            for name, func in inspect.getmembers(module, inspect.isfunction)
-            if func.__module__ == module_name and not name.startswith("_")
-        )
+        if importlib.util.find_spec(module_name) is not None:
+            names.extend(service_functions(module_name))
     return sorted(names)
+
+
+def service_functions(module_name: str) -> list[str]:
+    """List the public functions defined in a services module, or in every module of a package.
+
+    Args:
+        module_name: Dotted name of the services module or package.
+
+    Returns:
+        The dotted names of the functions defined there, imported names left out, ordered.
+    """
+    module = importlib.import_module(module_name)
+    modules = [module]
+    if hasattr(module, "__path__"):
+        modules += [
+            importlib.import_module(info.name)
+            for info in pkgutil.walk_packages(module.__path__, f"{module_name}.")
+        ]
+    return sorted(
+        f"{mod.__name__}.{name}"
+        for mod in modules
+        for name, func in inspect.getmembers(mod, inspect.isfunction)
+        if func.__module__ == mod.__name__ and not name.startswith("_")
+    )
 
 
 SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
