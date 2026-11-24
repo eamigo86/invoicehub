@@ -3,6 +3,8 @@
 from typing import Any
 
 from django.contrib import admin
+from django.core.exceptions import PermissionDenied
+from django.db.models import QuerySet
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.template.response import TemplateResponse
@@ -15,14 +17,63 @@ from .models import Tenant
 
 
 class TenantModelAdmin(ModelAdmin):  # type: ignore[misc]
-    """Base admin for tenant models, hidden entirely while no tenant is active.
+    """Base admin for tenant models, refused entirely while no tenant is active.
 
-    Without an active tenant the default manager would raise TenantNotSet, so every permission
-    is denied instead and the model disappears from the admin.
+    Without an active tenant the default manager would raise TenantNotSet, so the model is
+    left out of the index and every URL answers 403 instead.
     """
 
+    def get_queryset(self, request: HttpRequest) -> QuerySet[Any]:
+        """Return the model's rows, refusing the request while no tenant is active.
+
+        Every admin view that reads or locates objects goes through this method, often before
+        any permission check, so refusing here turns what would be a TenantNotSet server error
+        into a 403 on the changelist, change, delete and history views and on bulk actions.
+
+        Args:
+            request: Current request.
+
+        Returns:
+            The queryset of the active tenant's rows.
+
+        Raises:
+            PermissionDenied: When no tenant is active.
+        """
+        if get_current_tenant_id() is None:
+            raise PermissionDenied("no active tenant")
+        return super().get_queryset(request)  # type: ignore[no-any-return]
+
+    def log_addition(self, request: HttpRequest, obj: Any, message: Any) -> None:
+        """Skip the admin log entry for an addition.
+
+        The admin log keeps object representations regardless of the active tenant, which
+        would leak data across tenants. Audit logging belongs to the services.
+
+        Args:
+            request: Current request.
+            obj: Object that was added.
+            message: Change message, ignored.
+        """
+
+    def log_change(self, request: HttpRequest, obj: Any, message: Any) -> None:
+        """Skip the admin log entry for a change.
+
+        Args:
+            request: Current request.
+            obj: Object that was changed.
+            message: Change message, ignored.
+        """
+
+    def log_deletions(self, request: HttpRequest, queryset: Any) -> None:
+        """Skip the admin log entries for single and bulk deletions.
+
+        Args:
+            request: Current request.
+            queryset: Objects that are being deleted.
+        """
+
     def has_module_permission(self, request: HttpRequest) -> bool:
-        """Show the model in the admin index only while a tenant is active.
+        """Keep the model out of the admin index while no tenant is active.
 
         Args:
             request: Current request.
@@ -32,22 +83,8 @@ class TenantModelAdmin(ModelAdmin):  # type: ignore[misc]
         """
         return get_current_tenant_id() is not None and bool(super().has_module_permission(request))
 
-    def has_view_permission(self, request: HttpRequest, obj: Any = None) -> bool:
-        """Allow viewing only while a tenant is active.
-
-        Args:
-            request: Current request.
-            obj: Object being viewed, if any.
-
-        Returns:
-            True when a tenant is active and the user may view.
-        """
-        return get_current_tenant_id() is not None and bool(
-            super().has_view_permission(request, obj)
-        )
-
     def has_add_permission(self, request: HttpRequest) -> bool:
-        """Allow adding only while a tenant is active.
+        """Refuse the add view while no tenant is active, since it never loads a queryset.
 
         Args:
             request: Current request.
@@ -56,34 +93,6 @@ class TenantModelAdmin(ModelAdmin):  # type: ignore[misc]
             True when a tenant is active and the user may add.
         """
         return get_current_tenant_id() is not None and bool(super().has_add_permission(request))
-
-    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
-        """Allow changing only while a tenant is active.
-
-        Args:
-            request: Current request.
-            obj: Object being changed, if any.
-
-        Returns:
-            True when a tenant is active and the user may change.
-        """
-        return get_current_tenant_id() is not None and bool(
-            super().has_change_permission(request, obj)
-        )
-
-    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
-        """Allow deleting only while a tenant is active.
-
-        Args:
-            request: Current request.
-            obj: Object being deleted, if any.
-
-        Returns:
-            True when a tenant is active and the user may delete.
-        """
-        return get_current_tenant_id() is not None and bool(
-            super().has_delete_permission(request, obj)
-        )
 
 
 @admin.register(Tenant)
