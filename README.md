@@ -69,6 +69,12 @@ Default host ports (override with environment variables or a `.env` file):
 Containers connect to PostgreSQL as the unprivileged `invoicehub_app` role; only the migrate step
 uses `invoicehub_migrator`.
 
+### Choosing a tenant in the admin
+
+Tenant models are hidden in the admin until a tenant is active. Superusers pick one with the
+**Activate** row action on the Tenant admin, which stores it in the session. This is provisional:
+real tenant selection with membership checks arrives with authentication (RFC 0002).
+
 ### Checks and tests on the host
 
 ```bash
@@ -78,6 +84,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy .
 uv run python manage.py makemigrations --check
 uv run pytest --cov              # needs the Compose postgres and redis running
+uv run pytest -m isolation       # tenant isolation suite only (also part of the full run)
 uv run pre-commit install        # optional: run the checks on every commit
 ```
 
@@ -89,7 +96,7 @@ Host-side commands (pytest, migrate, runserver) connect as the migrator, which o
 Early development. The project scaffold, Docker stack, database roles, tooling and CI are in
 place; the tenancy foundation is in progress: the tenant registry, request-scoped tenant context,
 tenant-scoped base model and Row-Level Security are done, with `Customer` as the first protected
-model; the full isolation test suite is next.
+model; the parametrized isolation suite and admin tenant selection are in place.
 
 ## License
 
