@@ -354,6 +354,8 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.services.save_product",
         "billing.services.delete_product",
         "billing.services.record_event",
+        "billing.services.save_draft",
+        "billing.services.delete_draft",
     }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.
