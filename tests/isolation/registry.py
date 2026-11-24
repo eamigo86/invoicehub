@@ -18,7 +18,7 @@ from django.apps.registry import Apps
 from django.db import models
 from django.urls import URLPattern, URLResolver
 
-from billing.models import Customer, Product, ProductTaxRate, TaxRate
+from billing.models import AuditEvent, Customer, Product, ProductTaxRate, TaxRate
 from tenancy.models import ApiToken, Membership, Tenant, TenantModel
 
 
@@ -66,17 +66,34 @@ def make_product_tax_rate() -> TenantModel:
     return link
 
 
+def make_audit_event() -> TenantModel:
+    """Create one audit event for the active tenant, written by the system.
+
+    Returns:
+        The saved event.
+    """
+    event: TenantModel = AuditEvent.objects.create(
+        actor_kind=AuditEvent.ActorKind.SYSTEM,
+        action=f"action-{uuid.uuid4().hex[:8]}",
+        entity="invoice",
+        entity_id=uuid.uuid4(),
+    )
+    return event
+
+
 FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {
     Customer: make_customer,
     TaxRate: make_tax_rate,
     Product: make_product,
     ProductTaxRate: make_product_tax_rate,
+    AuditEvent: make_audit_event,
 }
 
 ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {
     Customer: "name",
     TaxRate: "name",
     Product: "name",
+    AuditEvent: "action",
 }
 """Plain text field of each model's admin form that the isolation tests overwrite with a marker.
 
@@ -271,6 +288,7 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.services.delete_tax_rate",
         "billing.services.save_product",
         "billing.services.delete_product",
+        "billing.services.record_event",
     }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.

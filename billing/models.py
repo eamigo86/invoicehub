@@ -1,6 +1,8 @@
 """Billing models."""
 
+from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
+from django.core.serializers.json import DjangoJSONEncoder
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
@@ -101,3 +103,61 @@ class ProductTaxRate(TenantModel):
                 fields=["tenant", "product", "tax_rate"], name="producttaxrate_tenant_pair_uniq"
             )
         ]
+
+
+class AuditEvent(TenantModel):
+    """One entry of the audit log: who did what to which entity, and when.
+
+    The log is append-only: rows are written by record_event and never updated or deleted by
+    the application. The actor references are cleared if the user or token is deleted, while
+    actor_kind keeps saying what kind of actor it was.
+
+    Attributes:
+        actor_kind: Whether a user, an API token, the system or the AI acted.
+        actor_user: The acting user, when actor_kind is user.
+        actor_token: The acting API token, when actor_kind is token.
+        action: What happened, for example invoice.issued.
+        entity: Kind of the entity acted on, for example invoice.
+        entity_id: Primary key of that entity.
+        before: Relevant state before the action, if any.
+        after: Relevant state after the action, if any.
+        created_at: When the event was recorded.
+    """
+
+    # ponytail: append-only is enforced by having no write path other than record_event;
+    # revoking UPDATE and DELETE on the table from the app role is the upgrade path.
+
+    class ActorKind(models.TextChoices):
+        """The kinds of actor an event can be attributed to."""
+
+        USER = "user"
+        TOKEN = "token"
+        SYSTEM = "system"
+        AI = "ai"
+
+    actor_kind = models.CharField(max_length=10, choices=ActorKind)
+    actor_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    actor_token = models.ForeignKey(
+        "tenancy.ApiToken", null=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    action = models.CharField(max_length=100)
+    entity = models.CharField(max_length=50)
+    entity_id = models.UUIDField()
+    before = models.JSONField(null=True, encoder=DjangoJSONEncoder)
+    after = models.JSONField(null=True, encoder=DjangoJSONEncoder)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        """Model options."""
+
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        """Describe the event by action and entity.
+
+        Returns:
+            A label such as invoice.issued on invoice 1c2d.
+        """
+        return f"{self.action} on {self.entity} {self.entity_id}"
