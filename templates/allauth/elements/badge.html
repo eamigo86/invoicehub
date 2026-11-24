@@ -1,0 +1,4 @@
+{% load allauth unfold %}
+{% setvar badge_variant %}{% if "success" in attrs.tags %}success{% elif "warning" in attrs.tags %}warning{% elif "danger" in attrs.tags or "error" in attrs.tags %}danger{% elif "primary" in attrs.tags %}primary{% endif %}{% endsetvar %}
+{% capture as badge_text silent %}{% slot %}{% endslot %}{% endcapture %}
+{% component "unfold/helpers/badge.html" with value=badge_text variant=badge_variant label_title=attrs.title %}{% endcomponent %}

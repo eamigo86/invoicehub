@@ -1,0 +1,4 @@
+{% load allauth unfold %}
+{% setvar button_variant %}{% if "danger" in attrs.tags %}danger{% elif "secondary" in attrs.tags %}secondary{% elif "outline" in attrs.tags %}default{% else %}primary{% endif %}{% endsetvar %}
+{% setvar button_id %}{% if attrs.id %}id="{{ attrs.id }}"{% endif %}{% endsetvar %}
+{% component "unfold/components/button.html" with href=attrs.href type=attrs.type form=attrs.form name=attrs.name value=attrs.value variant=button_variant extra_attrs=button_id %}{% slot %}{% endslot %}{% endcomponent %}

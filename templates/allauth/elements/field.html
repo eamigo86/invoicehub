@@ -1,0 +1,54 @@
+{% load allauth unfold unfold_classes %}
+{# Renders from attrs only. Password values and checkbox values are never echoed back. #}
+{% capture as field_help silent %}{% if slots.help_text %}{% slot help_text %}{% endslot %}{% endif %}{% endcapture %}
+{% if attrs.type == "checkbox" or attrs.type == "radio" %}
+    <div class="{% if attrs.errors %}errors {% endif %}form-checkbox flex flex-col group mb-4">
+        <div class="flex flex-row items-center">
+            <input {% if attrs.required %}required{% endif %}
+                   {% if attrs.disabled %}disabled{% endif %}
+                   {% if attrs.checked %}checked{% endif %}
+                   {% if attrs.name %}name="{{ attrs.name }}"{% endif %}
+                   {% if attrs.id %}id="{{ attrs.id }}"{% endif %}
+                   {% if attrs.type == "radio" and attrs.value is not None %}value="{{ attrs.value }}"{% endif %}
+                   class="{% unfold_classes attrs.type %}"
+                   type="{{ attrs.type }}">
+            <label for="{{ attrs.id }}" class="{% unfold_classes 'checkbox_label' %}">
+                {% slot label %}
+                {% endslot %}
+            </label>
+        </div>
+        {% include "unfold/helpers/form_errors.html" with errors=attrs.errors %}
+        <div class="{% unfold_classes 'prose_link' %}">{% include "unfold/helpers/help_text.html" with help_text=field_help %}</div>
+    </div>
+{% else %}
+    <div class="{% if attrs.errors %}errors {% endif %}form-field flex flex-col group mb-4">
+        <label for="{{ attrs.id }}" class="{% unfold_classes 'label' %}">
+            {% slot label %}
+            {% endslot %}
+            {% if attrs.required %}<span class="text-red-600 dark:text-red-500">*</span>{% endif %}
+        </label>
+        {% if attrs.type == "textarea" %}
+            <textarea {% if attrs.required %}required{% endif %}
+                      {% if attrs.rows %}rows="{{ attrs.rows }}"{% endif %}
+                      {% if attrs.disabled %}disabled{% endif %}
+                      {% if attrs.readonly %}readonly{% endif %}
+                      {% if attrs.name %}name="{{ attrs.name }}"{% endif %}
+                      {% if attrs.id %}id="{{ attrs.id }}"{% endif %}
+                      {% if attrs.placeholder %}placeholder="{{ attrs.placeholder }}"{% endif %}
+                      class="{% unfold_classes 'textarea' %}">{% slot value %}{% endslot %}</textarea>
+        {% else %}
+            <input {% if attrs.required %}required{% endif %}
+                   {% if attrs.disabled %}disabled{% endif %}
+                   {% if attrs.readonly %}readonly{% endif %}
+                   {% if attrs.name %}name="{{ attrs.name }}"{% endif %}
+                   {% if attrs.id %}id="{{ attrs.id }}"{% endif %}
+                   {% if attrs.placeholder %}placeholder="{{ attrs.placeholder }}"{% endif %}
+                   {% if attrs.autocomplete %}autocomplete="{{ attrs.autocomplete }}"{% endif %}
+                   {% if attrs.value is not None and attrs.type != "password" %}value="{{ attrs.value }}"{% endif %}
+                   class="{% unfold_classes 'input' %}"
+                   type="{{ attrs.type }}">
+        {% endif %}
+        {% include "unfold/helpers/form_errors.html" with errors=attrs.errors %}
+        <div class="{% unfold_classes 'prose_link' %}">{% include "unfold/helpers/help_text.html" with help_text=field_help %}</div>
+    </div>
+{% endif %}

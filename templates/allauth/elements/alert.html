@@ -1,0 +1,11 @@
+{% load allauth unfold %}
+{% capture as alert_message silent %}{% slot message %}{% endslot %}{% endcapture %}
+{% if "error" in attrs.tags or "danger" in attrs.tags %}
+    {% include "unfold/helpers/messages/error.html" with message=alert_message %}
+{% elif "success" in attrs.tags %}
+    {% include "unfold/helpers/messages/success.html" with message=alert_message %}
+{% elif "warning" in attrs.tags %}
+    {% include "unfold/helpers/messages/warning.html" with message=alert_message %}
+{% else %}
+    {% include "unfold/helpers/messages/info.html" with message=alert_message %}
+{% endif %}
