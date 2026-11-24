@@ -4,6 +4,7 @@ import json
 import uuid
 
 import pytest
+from asgiref.sync import async_to_sync
 from django.contrib.auth.models import AnonymousUser
 from django.http import HttpRequest, HttpResponse
 from django.test import RequestFactory
@@ -115,6 +116,40 @@ def test_a_token_replaces_the_session_identity_and_leaves_the_session_alone() ->
     assert seen.tenant_id == tenant.pk
     assert isinstance(seen.user, AnonymousUser)
     assert session == {"tenant_id": str(other.pk)}
+
+
+def test_a_token_also_replaces_the_async_user() -> None:
+    """Async code reading request.auser sees no session user under a token either."""
+    plaintext, _ = issued(["invoices:read"])
+    ann = User.objects.create_user("ann", "ann@example.com", "pw")
+    seen: list[object] = []
+
+    def view(request: HttpRequest) -> HttpResponse:
+        """Record the user returned by request.auser.
+
+        Args:
+            request: Incoming request.
+
+        Returns:
+            An empty response.
+        """
+        seen.append(async_to_sync(request.auser)())
+        return HttpResponse()
+
+    async def session_user() -> User:
+        """Return the session user, as AuthenticationMiddleware would.
+
+        Returns:
+            The signed in user.
+        """
+        return ann
+
+    request = RequestFactory().get("/", headers={"Authorization": f"Bearer {plaintext}"})
+    request.session = {}  # type: ignore[assignment]
+    request.user = ann
+    request.auser = session_user
+    TenantMiddleware(view)(request)
+    assert isinstance(seen[0], AnonymousUser)
 
 
 @pytest.mark.parametrize(

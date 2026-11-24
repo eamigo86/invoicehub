@@ -11,20 +11,29 @@ from tenancy.permissions import Principal, set_request_principal
 from tenancy.tokens import authenticate_token
 
 
+async def _anonymous_user() -> AnonymousUser:
+    """Return the anonymous user that token requests run as in async code.
+
+    Returns:
+        An anonymous user.
+    """
+    return AnonymousUser()
+
+
 class TenantMiddleware:
     """Expose the session tenant to the rest of the request through the context variable.
 
     The session tenant is applied only when the authenticated user holds a membership in it;
     otherwise no tenant is applied and the stale session key is removed. Superusers get no
     bypass. A Bearer API token takes over instead: its tenant and scopes apply, the session is
-    ignored and left untouched, and the request user becomes anonymous so a session identity
-    never mixes with token authority. A bad Bearer token is answered 401 without reaching the
-    view; other Authorization schemes are ignored. The acting principal is attached to the
-    request for the permission service. It sits right after AuthenticationMiddleware so that
-    the session and the user are available. It only sets the context variable: ATOMIC_REQUESTS
-    wraps the view alone and this middleware runs outside that transaction, so a SET LOCAL here
-    would have no effect. The database backend
-    applies the variable when the view's transaction opens.
+    ignored and left untouched, and the request user, sync and async, becomes anonymous so a
+    session identity never mixes with token authority. A bad Bearer token is answered 401
+    without reaching the view; other Authorization schemes are ignored. The acting principal is
+    attached to the request for the permission service. It sits right after
+    AuthenticationMiddleware so that the session and the user are available. It only sets the
+    context variable: ATOMIC_REQUESTS wraps the view alone and this middleware runs outside
+    that transaction, so a SET LOCAL here would have no effect. The database backend applies
+    the variable when the view's transaction opens.
     """
 
     def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
@@ -98,6 +107,7 @@ class TenantMiddleware:
                 response["WWW-Authenticate"] = 'Bearer error="invalid_token"'
                 return response
             request.user = AnonymousUser()
+            request.auser = _anonymous_user
             principal = Principal.from_token(api_token)
             tenant_id = api_token.tenant_id
         set_request_principal(request, principal)
