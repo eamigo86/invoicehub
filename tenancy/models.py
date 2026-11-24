@@ -1,8 +1,11 @@
 """Tenancy models."""
 
 import uuid
+from typing import Any
 
 from django.db import models
+
+from tenancy.context import TenantMismatch, require_current_tenant_id
 
 
 class Tenant(models.Model):
@@ -24,3 +27,58 @@ class Tenant(models.Model):
             The display name of the tenant.
         """
         return self.name
+
+
+class TenantManager(models.Manager[Any]):
+    """Manager whose querysets only ever see the current tenant's rows.
+
+    This is the application-level second barrier; Row-Level Security is the real one.
+    """
+
+    def get_queryset(self) -> models.QuerySet[Any]:
+        """Return the queryset restricted to the current tenant.
+
+        Returns:
+            A queryset filtered by the active tenant. TenantNotSet is raised when no tenant is
+            active.
+        """
+        return super().get_queryset().filter(tenant_id=require_current_tenant_id())
+
+
+class TenantModel(models.Model):
+    """Abstract base of every business model owned by a tenant.
+
+    Rows are protected twice: the default manager filters by the current tenant, and save
+    refuses to write a row that belongs to another tenant.
+    """
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, editable=False, related_name="+")
+
+    tenant_id: uuid.UUID | None
+
+    objects = TenantManager()
+
+    class Meta:
+        """Model options."""
+
+        abstract = True
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        """Save the row on behalf of the current tenant.
+
+        A new row without a tenant receives the active one. TenantNotSet is raised when no
+        tenant is active.
+
+        Args:
+            *args: Positional arguments forwarded to Model.save.
+            **kwargs: Keyword arguments forwarded to Model.save.
+
+        Raises:
+            TenantMismatch: When the row belongs to a tenant other than the active one.
+        """
+        current = require_current_tenant_id()
+        if self.tenant_id is None:
+            self.tenant_id = current
+        elif str(self.tenant_id) != str(current):
+            raise TenantMismatch(f"row belongs to tenant {self.tenant_id}, active is {current}")
+        super().save(*args, **kwargs)
