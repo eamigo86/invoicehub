@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from allauth.account.models import EmailAddress
 from django.conf import settings
+from django.contrib import admin
 from django.contrib.auth.models import AnonymousUser
 from django.core.cache import cache
 from django.test import Client, RequestFactory
@@ -342,3 +343,11 @@ def test_the_admin_offers_a_switch_tenant_link(client: Client) -> None:
     body = text(client.get("/admin/"))
     assert 'href="/tenants/"' in body
     assert "Switch tenant" in body
+
+
+def test_the_provisional_activate_action_is_gone() -> None:
+    """The tenant admin has neither the action nor its permission method."""
+    tenant_admin = admin.site._registry[Tenant]
+    assert not hasattr(tenant_admin, "activate")
+    assert not hasattr(tenant_admin, "has_activate_permission")
+    assert not getattr(tenant_admin, "actions_row", [])
