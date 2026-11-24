@@ -1,5 +1,6 @@
 """Every django-allauth element is overridden with Unfold components and class lists."""
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,20 @@ def template_names(response: Any) -> set[str]:
         The template names.
     """
     return {str(t.name) for t in response.templates}
+
+
+def render_element(source: str) -> str:
+    """Render a template snippet that uses allauth elements.
+
+    Args:
+        source: Template body, allauth tags already available.
+
+    Returns:
+        The rendered HTML.
+    """
+    origin = Origin(name="probe", template_name="probe.html")
+    template = Template("{% load allauth %}" + source, origin, engine=Engine.get_default())
+    return template.render(RequestContext(RequestFactory().get("/")))
 
 
 def test_every_stock_element_has_a_project_override() -> None:
@@ -210,8 +225,48 @@ def test_every_remaining_element_renders_unfold_markup(source: str, marker: str)
         source: Template using the element.
         marker: Class that only Unfold styling produces.
     """
-    request = RequestFactory().get("/")
-    origin = Origin(name="probe", template_name="probe.html")
-    template = Template("{% load allauth %}" + source, origin, engine=Engine.get_default())
-    html = template.render(RequestContext(request))
-    assert marker in html
+    assert marker in render_element(source)
+
+
+def test_badge_renders_its_text_inside_the_span() -> None:
+    """The badge span holds the slot text, not just the Unfold classes."""
+    html = render_element('{% element badge tags="success" %}Verified{% endelement %}')
+    assert re.search(r"<span[^>]*>\s*Verified\s*</span>", html)
+
+
+def test_email_page_badges_show_their_labels(client: Client) -> None:
+    """The Verified and Primary badges on the email page are not empty boxes.
+
+    Args:
+        client: Django test client fixture.
+    """
+    from allauth.account.models import EmailAddress
+
+    user = User.objects.create_user("ann", EMAIL, PASSWORD)
+    EmailAddress.objects.create(user=user, email=EMAIL, verified=True, primary=True)
+    client.force_login(user)
+    body = client.get("/accounts/email/").content.decode()
+    for label in ("Verified", "Primary"):
+        assert re.search(rf"<span[^>]*>\s*{label}\s*</span>", body)
+
+
+def test_links_inside_a_paragraph_element_are_styled() -> None:
+    """An inline link sits inside a wrapper carrying Unfold's link class."""
+    html = render_element('{% element p %}See <a href="/x/">this</a>{% endelement %}')
+    wrapper = html[: html.index('<a href="/x/"')]
+    assert unfold_classes("prose_link") in wrapper
+    assert "prose-a:text-link" in unfold_classes("prose_link")
+
+
+def test_signup_and_login_pages_wrap_their_inline_links(client: Client) -> None:
+    """The sign in link on signup and the forgot password link on login are styled.
+
+    Args:
+        client: Django test client fixture.
+    """
+    link_class = unfold_classes("prose_link")
+    signup = client.get("/accounts/signup/").content.decode()
+    assert link_class in signup[: signup.index('<a href="/accounts/login/"')]
+    login = client.get("/accounts/login/").content.decode()
+    forgot = login.index('<a href="/accounts/password/reset/"')
+    assert link_class in login[login.rindex("</label>", 0, forgot) : forgot]

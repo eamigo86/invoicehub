@@ -1,2 +1,2 @@
-{% load allauth unfold %}
-<div class="mb-4">{% component "unfold/components/text.html" %}{% slot %}{% endslot %}{% endcomponent %}</div>
+{% load allauth unfold unfold_classes %}
+<div class="mb-4 {% unfold_classes 'prose_link' %}">{% component "unfold/components/text.html" %}{% slot %}{% endslot %}{% endcomponent %}</div>

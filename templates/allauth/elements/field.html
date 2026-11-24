@@ -18,7 +18,7 @@
             </label>
         </div>
         {% include "unfold/helpers/form_errors.html" with errors=attrs.errors %}
-        {% include "unfold/helpers/help_text.html" with help_text=field_help %}
+        <div class="{% unfold_classes 'prose_link' %}">{% include "unfold/helpers/help_text.html" with help_text=field_help %}</div>
     </div>
 {% else %}
     <div class="{% if attrs.errors %}errors {% endif %}form-field flex flex-col group mb-4">
@@ -49,6 +49,6 @@
                    type="{{ attrs.type }}">
         {% endif %}
         {% include "unfold/helpers/form_errors.html" with errors=attrs.errors %}
-        {% include "unfold/helpers/help_text.html" with help_text=field_help %}
+        <div class="{% unfold_classes 'prose_link' %}">{% include "unfold/helpers/help_text.html" with help_text=field_help %}</div>
     </div>
 {% endif %}
