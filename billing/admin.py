@@ -8,6 +8,7 @@ from django.forms import ModelForm
 from django.http import HttpRequest
 
 from tenancy.admin import TenantModelAdmin
+from tenancy.permissions import request_principal
 
 from .models import Customer
 from .services import delete_customer, save_customer
@@ -31,7 +32,7 @@ class CustomerAdmin(TenantModelAdmin):
             form: Form that produced the customer.
             change: Whether an existing customer is being changed.
         """
-        save_customer(obj)
+        save_customer(request_principal(request), obj)
 
     def delete_model(self, request: HttpRequest, obj: Customer) -> None:
         """Delete a customer through the service.
@@ -40,7 +41,7 @@ class CustomerAdmin(TenantModelAdmin):
             request: Current request.
             obj: Customer being deleted.
         """
-        delete_customer(obj)
+        delete_customer(request_principal(request), obj)
 
     def delete_queryset(self, request: HttpRequest, queryset: QuerySet[Customer]) -> None:
         """Delete selected customers one by one through the service.
@@ -50,4 +51,4 @@ class CustomerAdmin(TenantModelAdmin):
             queryset: Customers selected for deletion.
         """
         for customer in queryset:
-            delete_customer(customer)
+            delete_customer(request_principal(request), customer)

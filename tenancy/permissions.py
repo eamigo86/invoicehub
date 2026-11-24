@@ -7,6 +7,7 @@ from enum import StrEnum
 from django.core.exceptions import PermissionDenied
 from django.http import HttpRequest
 
+from tenancy.context import get_current_tenant_id
 from tenancy.models import ApiToken, Membership
 
 
@@ -88,17 +89,25 @@ def has_permission(principal: Principal | None, permission: Permission) -> bool:
 
 
 def require_permission(principal: Principal | None, permission: Permission) -> None:
-    """Refuse the request unless the principal holds a permission.
+    """Refuse the request unless the principal holds a permission in the active tenant.
+
+    When a tenant is active, the principal must belong to it, so a principal of one tenant can
+    never act through the services while another tenant is current.
 
     Args:
         principal: Acting principal, or None when there is no tenant or actor.
         permission: Permission that is required.
 
     Raises:
-        PermissionDenied: When the principal does not hold the permission.
+        PermissionDenied: When the principal does not hold the permission, or belongs to a
+            tenant other than the active one.
     """
     if not has_permission(principal, permission):
         raise PermissionDenied(f"missing permission {permission}")
+    assert principal is not None
+    active = get_current_tenant_id()
+    if active is not None and principal.tenant_id != active:
+        raise PermissionDenied("principal belongs to another tenant")
 
 
 _PRINCIPAL_ATTR = "tenant_principal"
