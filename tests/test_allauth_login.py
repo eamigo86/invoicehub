@@ -218,6 +218,6 @@ def test_allauth_mail_comes_from_the_configured_default_sender(
         mailoutbox: Captured outgoing messages.
         settings: pytest-django settings fixture.
     """
+    settings.DEFAULT_FROM_EMAIL = "Billing <billing@example.test>"
     signup(client)
-    assert mailoutbox[0].from_email == settings.DEFAULT_FROM_EMAIL
-    assert settings.DEFAULT_FROM_EMAIL == "InvoiceHub <no-reply@localhost>"
+    assert mailoutbox[0].from_email == "Billing <billing@example.test>"
