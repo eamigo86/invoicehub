@@ -2,11 +2,13 @@
 
 import pytest
 from django.contrib import admin
-from django.db import connection
+from django.db import connection, models
+from django.test.utils import isolate_apps
 
 from tenancy.admin import TenantModelAdmin
-from tests.isolation.registry import FACTORIES, concrete_tenant_models
-from tests.test_rls_operation import EXPECTED
+from tenancy.models import TenantModel
+from tenancy.operations import POLICY, POLICY_QUAL
+from tests.isolation.registry import FACTORIES, concrete_tenant_models, non_tenant_models
 
 pytestmark = pytest.mark.isolation
 
@@ -35,7 +37,7 @@ def test_every_tenant_table_enforces_row_level_security() -> None:
             )
             policies = cursor.fetchall()
         assert flags == (True, True), table
-        assert policies == [("tenant_isolation", EXPECTED, EXPECTED)], table
+        assert policies == [(POLICY, POLICY_QUAL, POLICY_QUAL)], table
 
 
 def test_every_tenant_model_admin_hides_without_a_tenant() -> None:
@@ -47,3 +49,35 @@ def test_every_tenant_model_admin_hides_without_a_tenant() -> None:
         and not isinstance(admin.site._registry[model], TenantModelAdmin)
     ]
     assert wrong == []
+
+
+def test_every_business_model_is_a_tenant_model() -> None:
+    """Business apps contain only tenant models, so no business data escapes RLS."""
+    assert non_tenant_models() == []
+
+
+def test_the_business_model_check_flags_plain_and_implicit_through_models() -> None:
+    """The check reports a plain model and the auto-created table of a many-to-many."""
+    with isolate_apps("billing") as iso:
+
+        class Plain(models.Model):
+            """Model that is not tenant owned."""
+
+            class Meta:
+                """Model options."""
+
+                app_label = "billing"
+
+        class Tagged(TenantModel):
+            """Tenant model with an implicit many-to-many through table."""
+
+            plains = models.ManyToManyField(Plain)
+
+            class Meta:
+                """Model options."""
+
+                app_label = "billing"
+
+        assert iso is not None
+        assert Tagged is not None
+        assert non_tenant_models(iso, ("billing",)) == ["billing.Plain", "billing.Tagged_plains"]

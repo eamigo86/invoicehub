@@ -4,11 +4,9 @@ import pytest
 from django.db import connection, migrations, models
 from django.db.migrations.state import ProjectState
 
-from tenancy.operations import EnableRowLevelSecurity
+from tenancy.operations import POLICY, POLICY_QUAL, EnableRowLevelSecurity
 
 pytestmark = pytest.mark.django_db
-
-EXPECTED = "(tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid)"
 
 
 def build_table() -> ProjectState:
@@ -65,7 +63,7 @@ def test_forwards_enables_forces_and_creates_the_policy() -> None:
     with connection.schema_editor() as editor:
         EnableRowLevelSecurity("Probe").database_forwards("tenancy", editor, state, state)
     assert table_flags() == (True, True)
-    assert policies() == [("tenant_isolation", EXPECTED, EXPECTED)]
+    assert policies() == [(POLICY, POLICY_QUAL, POLICY_QUAL)]
 
 
 def test_backwards_removes_everything() -> None:

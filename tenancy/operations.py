@@ -8,6 +8,8 @@ from django.db.migrations.state import ProjectState
 
 POLICY = "tenant_isolation"
 TENANT_EXPRESSION = "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
+# The same expression as PostgreSQL reports it in pg_policies, for tests that read it back.
+POLICY_QUAL = "(tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid)"
 
 
 class EnableRowLevelSecurity(Operation):
