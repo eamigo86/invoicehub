@@ -1,5 +1,6 @@
 """Tenant A must never read or change tenant B's rows, through the ORM or raw SQL."""
 
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -11,9 +12,25 @@ from psycopg import errors
 
 from tenancy.context import TenantMismatch, apply_tenant, tenant_context
 from tenancy.models import Tenant, TenantModel
-from tests.isolation.registry import FACTORIES, concrete_tenant_models
+from tests.isolation.registry import (
+    ADMIN_MARKER_FIELDS,
+    FACTORIES,
+    concrete_tenant_models,
+)
 
 pytestmark = [pytest.mark.isolation, pytest.mark.django_db]
+
+
+def marker_field(model: type[TenantModel]) -> str:
+    """Name the text field that clones overwrite so that a unique name is never repeated.
+
+    Args:
+        model: Tenant model under test.
+
+    Returns:
+        The field named in ADMIN_MARKER_FIELDS, or name.
+    """
+    return ADMIN_MARKER_FIELDS.get(model, "name")
 
 
 @dataclass
@@ -194,6 +211,7 @@ def test_bulk_create_for_another_tenant_is_rejected(world: World) -> None:
         copy.pk = None
         copy._state.adding = True
         copy.tenant_id = tenant_id  # type: ignore[assignment]
+        setattr(copy, marker_field(world.model), f"clone-{uuid.uuid4().hex}")
         return copy
 
     with tenant_context(world.a.pk):
@@ -240,19 +258,23 @@ def test_raw_insert_for_another_tenant_is_rejected(world: World, role: str | Non
     """
     table, pk, tenant = names(world)
     q = connection.ops.quote_name
-    others = ", ".join(
+    marker = q(marker_field(world.model))
+    others = [
         q(f.column or "")
         for f in world.model._meta.concrete_fields
         if not f.primary_key and f.column != "tenant_id"
-    )
+    ]
+    selected = ", ".join("%s" if column == marker else column for column in others)
     clone = (
-        f"INSERT INTO {table} ({tenant}, {others}) SELECT %s, {others} FROM {table} WHERE {pk} = %s"
+        f"INSERT INTO {table} ({tenant}, {', '.join(others)}) "
+        f"SELECT %s, {selected} FROM {table} WHERE {pk} = %s"
     )
+    fresh = f"clone-{uuid.uuid4().hex}"
     with tenant_context(world.a.pk), as_role(role), connection.cursor() as cursor:
         with pytest.raises(ProgrammingError) as caught, transaction.atomic():
-            cursor.execute(clone, [world.b.pk, world.a_row.pk])
+            cursor.execute(clone, [world.b.pk, fresh, world.a_row.pk])
         assert isinstance(caught.value.__cause__, errors.InsufficientPrivilege)
-        cursor.execute(clone, [world.a.pk, world.a_row.pk])
+        cursor.execute(clone, [world.a.pk, fresh, world.a_row.pk])
         cursor.execute(f"SELECT count(*) FROM {table}")
         assert cursor.fetchone() == (2,)
 
