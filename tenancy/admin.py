@@ -3,8 +3,10 @@
 from typing import Any
 
 from django.contrib import admin
-from django.http import HttpRequest
+from django.http import HttpRequest, HttpResponse
+from django.shortcuts import redirect
 from unfold.admin import ModelAdmin  # type: ignore[import-untyped]
+from unfold.decorators import action  # type: ignore[import-untyped]
 
 from tenancy.context import get_current_tenant_id
 
@@ -89,3 +91,31 @@ class TenantAdmin(ModelAdmin):  # type: ignore[misc]
 
     list_display = ("name", "created_at")
     search_fields = ("name",)
+    actions_row = ["activate"]
+
+    def has_activate_permission(self, request: HttpRequest) -> bool:
+        """Restrict the Activate action to superusers.
+
+        Args:
+            request: Current request.
+
+        Returns:
+            True when the user is a superuser.
+        """
+        return bool(request.user.is_superuser)
+
+    @action(description="Activate", permissions=["activate"])  # type: ignore[untyped-decorator]
+    def activate(self, request: HttpRequest, object_id: str) -> HttpResponse:
+        """Make a tenant the active one for the admin session.
+
+        Args:
+            request: Current request.
+            object_id: Primary key of the tenant to activate.
+
+        Returns:
+            A redirect back to the tenant changelist.
+        """
+        # Provisional until the RFC 0002 authentication slice provides real tenant selection
+        # with membership checks.
+        request.session["tenant_id"] = str(object_id)
+        return redirect("admin:tenancy_tenant_changelist")
