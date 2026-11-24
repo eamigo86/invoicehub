@@ -32,6 +32,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 CELERY_BROKER_URL: str = env("CELERY_BROKER_URL", default="redis://localhost:6390/0")
 
 MAILERS = build_mailers(env("EMAIL_URL", default="consolemail://"))
+DEFAULT_FROM_EMAIL: str = env("DEFAULT_FROM_EMAIL", default="InvoiceHub <no-reply@localhost>")
 
 INSTALLED_APPS = [
     "unfold",

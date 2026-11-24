@@ -206,3 +206,18 @@ def test_verification_mail_goes_through_the_mailers_setting(settings: Any, clien
     RecordingBackend.sent.clear()
     signup(client)
     assert [m.to for m in RecordingBackend.sent] == [[EMAIL]]
+
+
+def test_allauth_mail_comes_from_the_configured_default_sender(
+    client: Client, mailoutbox: list[EmailMessage], settings: Any
+) -> None:
+    """The verification mail uses DEFAULT_FROM_EMAIL rather than Django's localhost default.
+
+    Args:
+        client: Django test client fixture.
+        mailoutbox: Captured outgoing messages.
+        settings: pytest-django settings fixture.
+    """
+    signup(client)
+    assert mailoutbox[0].from_email == settings.DEFAULT_FROM_EMAIL
+    assert settings.DEFAULT_FROM_EMAIL == "InvoiceHub <no-reply@localhost>"
