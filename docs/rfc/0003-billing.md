@@ -67,7 +67,9 @@ class InvoiceIssuer:
 ## Taxes and rounding
 
 - Amounts in cents; percentages in basis points (8.25 % = 825).
-- Tax calculated per line and rounded half up; the total is the sum of the lines. A property test checks that the total always adds up.
+- The net of a line is quantity times unit price minus the line discount, rounded half up to the cent. Each tax rate of the line is applied to that net and rounded half up to the cent, so every rate is rounded on its own.
+- A line total is its net plus its taxes. The invoice subtotal is the sum of the line nets, the tax total is the sum of every line tax, and the invoice total is the subtotal plus the tax total.
+- The per-rate breakdown sums the line taxes of each rate, so it always adds up exactly to the tax total. Hypothesis property tests check these identities, and CI runs them derandomized.
 - Multiple rates per line (e.g. state + county sales tax) with a per-rate breakdown in the PDF.
 - Rates are configured by the tenant: InvoiceHub does not decide which rates apply (nexus, exemptions, product taxability) and does not promise tax compliance.
 
