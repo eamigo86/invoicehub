@@ -9,6 +9,8 @@ from pathlib import Path
 
 import environ  # type: ignore[import-untyped]
 
+from config.mail import build_mailers
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 env = environ.Env()
@@ -26,21 +28,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 CELERY_BROKER_URL: str = env("CELERY_BROKER_URL", default="redis://localhost:6390/0")
 
-_email = env.email("EMAIL_URL", default="consolemail://")
-_smtp = {
-    "host": "EMAIL_HOST",
-    "port": "EMAIL_PORT",
-    "username": "EMAIL_HOST_USER",
-    "password": "EMAIL_HOST_PASSWORD",
-}
-MAILERS = {
-    "default": {
-        "BACKEND": _email["EMAIL_BACKEND"],
-        "OPTIONS": {k: _email[v] for k, v in _smtp.items() if _email[v]}
-        if _email["EMAIL_HOST"]
-        else {},
-    }
-}
+MAILERS = build_mailers(env("EMAIL_URL", default="consolemail://"))
 
 INSTALLED_APPS = [
     "unfold",
