@@ -16,9 +16,9 @@ class TenantMiddleware:
     otherwise no tenant is applied and the stale session key is removed. Superusers get no
     bypass. The acting principal is attached to the request for the permission service. It sits
     right after AuthenticationMiddleware so that the session and the user are available. It only
-    sets the context variable: ATOMIC_REQUESTS wraps
-    the view alone and this middleware runs outside that transaction, so a SET LOCAL here would
-    have no effect. The database backend applies the variable when the view's transaction opens.
+    sets the context variable: ATOMIC_REQUESTS wraps the view alone and this middleware runs
+    outside that transaction, so a SET LOCAL here would have no effect. The database backend
+    applies the variable when the view's transaction opens.
     """
 
     def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
