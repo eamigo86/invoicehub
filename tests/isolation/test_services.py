@@ -23,6 +23,7 @@ from billing.services import (
     delete_product,
     delete_series,
     delete_tax_rate,
+    draft_credit_note,
     issue_invoice,
     record_event,
     save_customer,
@@ -520,6 +521,50 @@ def test_a_principal_of_a_cannot_issue_while_b_is_current(
             issue_invoice(owner_of(a), draft)
         assert Invoice.objects.get().status == Invoice.Status.DRAFT
         assert not InvoiceSeries.objects.exists()
+
+
+def test_b_cannot_credit_an_invoice_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, A's issued invoice is not found and no credit note is drafted.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    complete_issuer(a, b)
+    with tenant_context(a.pk):
+        customer = save_customer(owner_of(a), Customer(name="Acme"))
+        draft = save_draft(
+            owner_of(a), Invoice(customer=customer), [DraftLine("Old", Decimal(1), 5)]
+        )
+        issued = issue_invoice(owner_of(a), draft)
+    with tenant_context(b.pk), pytest.raises(Invoice.DoesNotExist):
+        draft_credit_note(owner_of(b), issued)
+    with tenant_context(b.pk):
+        assert Invoice.objects.count() == 0
+    with tenant_context(a.pk):
+        stored = Invoice.objects.get()
+        assert (stored.status, stored.kind) == (Invoice.Status.ISSUED, Invoice.Kind.INVOICE)
+
+
+def test_a_principal_of_a_cannot_credit_while_b_is_current(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """A principal of A is refused under B and B's invoice gets no credit note.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    complete_issuer(a, b)
+    with tenant_context(b.pk):
+        customer = save_customer(owner_of(b), Customer(name="Bolt"))
+        draft = save_draft(
+            owner_of(b), Invoice(customer=customer), [DraftLine("Old", Decimal(1), 5)]
+        )
+        issued = issue_invoice(owner_of(b), draft)
+        with pytest.raises(PermissionDenied):
+            draft_credit_note(owner_of(a), issued)
+        assert Invoice.objects.count() == 1
 
 
 def test_the_series_counters_of_two_tenants_are_independent(

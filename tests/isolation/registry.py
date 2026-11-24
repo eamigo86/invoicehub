@@ -374,6 +374,7 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.services.save_draft",
         "billing.services.delete_draft",
         "billing.services.issue_invoice",
+        "billing.services.draft_credit_note",
         "billing.services.save_series",
         "billing.services.delete_series",
     }
