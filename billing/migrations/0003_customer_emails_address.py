@@ -1,7 +1,8 @@
 """Complete customer addresses and replace the single email with a list.
 
 The old email is copied into emails before the column is dropped. Customer is under forced
-Row-Level Security, so the copy lifts the force for its own statement and restores it after.
+Row-Level Security, so the copy runs once per tenant with that tenant set, and the policy is
+never lifted.
 """
 
 import django.contrib.postgres.fields
@@ -11,16 +12,20 @@ from django.db.backends.base.schema import BaseDatabaseSchemaEditor
 
 
 def _copy(schema_editor: BaseDatabaseSchemaEditor, statement: str) -> None:
-    """Run a data statement against the customer table outside Row-Level Security.
+    """Run a data statement against the customer rows of every tenant, one tenant at a time.
 
     Args:
         schema_editor: Editor whose connection runs the statements.
-        statement: SQL that reads or updates every customer row.
+        statement: SQL that reads or updates the customer rows visible to the current tenant.
     """
-    table = schema_editor.quote_name("billing_customer")
-    schema_editor.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
-    schema_editor.execute(statement)
-    schema_editor.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+    with schema_editor.connection.cursor() as cursor:
+        cursor.execute("SELECT current_setting('app.tenant_id', true)")
+        previous = cursor.fetchone()[0] or ""
+        cursor.execute("SELECT id FROM tenancy_tenant")
+        for (tenant_id,) in cursor.fetchall():
+            cursor.execute("SELECT set_config('app.tenant_id', %s, true)", [str(tenant_id)])
+            cursor.execute(statement)
+        cursor.execute("SELECT set_config('app.tenant_id', %s, true)", [previous])
 
 
 def copy_email_to_emails(apps: Apps, schema_editor: BaseDatabaseSchemaEditor) -> None:
