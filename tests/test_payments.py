@@ -294,6 +294,23 @@ def test_non_positive_allocations_are_refused(
     assert Payment.objects.count() == 0
 
 
+def test_a_recorded_payment_cannot_be_recorded_again(writer: Principal, customer: Customer) -> None:
+    """Passing a stored payment again is refused, so a recorded amount is never rewritten.
+
+    Args:
+        writer: Principal allowed to write invoices.
+        customer: Customer to invoice.
+    """
+    invoice = issued_invoice(writer, customer, cents=2000)
+    other = issued_invoice(writer, customer, cents=2000)
+    payment = pay(writer, [(invoice, 500)])
+    payment.amount = 9999
+    with pytest.raises(InvalidTransition):
+        record_payment(writer, payment, [(other, 500)])
+    assert Payment.objects.get().amount == 500
+    assert PaymentAllocation.objects.count() == 1
+
+
 def test_a_non_positive_payment_is_refused(writer: Principal, customer: Customer) -> None:
     """A payment of zero cents is refused by validation.
 

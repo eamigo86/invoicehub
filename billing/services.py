@@ -768,13 +768,16 @@ def record_payment(
 
     Raises:
         Invoice.DoesNotExist: When an invoice is not stored for the current tenant.
-        InvalidTransition: When an invoice is not an invoice in the issued, sent or partially
-            paid status.
+        InvalidTransition: When the payment is already recorded, so a recorded amount is never
+            rewritten, or an invoice is not an invoice in the issued, sent or partially paid
+            status.
         ValidationError: When an invoice appears twice or is in another currency than the
             payment, an amount is not positive or exceeds the balance due of its invoice, the
             allocations together exceed the payment, or the payment itself is invalid.
     """
     require_permission(principal, Permission.INVOICES_WRITE)
+    if not payment._state.adding:
+        raise InvalidTransition("a recorded payment cannot be recorded again")
     _clean(payment)
     ids = [invoice.pk for invoice, _ in allocations]
     if len(set(ids)) != len(ids):
