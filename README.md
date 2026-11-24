@@ -1,9 +1,21 @@
 # InvoiceHub
 
-InvoiceHub is a multi-tenant invoicing SaaS for SMBs and freelancers. It issues invoices and PDFs,
-reconciles bank payments against invoices with [remitmatch](docs/rfc/0001-remitmatch.md), and
-includes an AI assistant exposed through an MCP server. Tenant isolation is enforced twice: by the
-application and by PostgreSQL Row-Level Security.
+[![CI](https://github.com/eamigo86/invoicehub/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/eamigo86/invoicehub/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+**Multi-tenant invoicing for small businesses — invoices, bank reconciliation and an AI assistant —
+with each company's data isolated by PostgreSQL Row-Level Security.**
+
+## At a glance
+
+| Area | What it does | Status |
+| --- | --- | --- |
+| Tenant isolation | Every query is scoped twice: by the application and by Row-Level Security. An isolation suite runs as its own CI gate | Done |
+| Accounts and roles | Email login with mandatory verification (django-allauth), owner/admin/accountant/viewer roles, hashed and revocable per-tenant API tokens with scopes | Done |
+| Billing | Invoices and credit notes with gap-free numbering, PDFs, email delivery, configurable sales tax rates | Next |
+| Reconciliation | CSV bank statements matched to invoices with [remitmatch](docs/rfc/0001-remitmatch.md), with a review queue for ambiguous matches | Planned |
+| Integrations | GraphQL API for integrators (django-graphex) and an MCP server for agents | Planned |
+| AI assistant | Drafts invoices and reminders, answers questions about the business, explains ambiguous matches; evals in CI | Planned |
 
 ## Architecture
 
@@ -45,18 +57,30 @@ flowchart TB
     RD --> R
 ```
 
-Design documents live in [`docs/rfc/`](docs/rfc/). They are drafts and may change.
+## Quick start
 
-## Run locally
-
-Requirements: Docker, [uv](https://docs.astral.sh/uv/) and Python 3.13.
+Only Docker is needed.
 
 ```bash
-docker compose up -d --build     # web, worker, postgres, redis, mailpit
+git clone https://github.com/eamigo86/invoicehub.git && cd invoicehub
+docker compose up -d --build --wait
 docker compose exec web python manage.py createsuperuser
 ```
 
-Default host ports (override with environment variables or a `.env` file):
+Then sign in at http://localhost:8010/accounts/login/. Email verification is mandatory; the
+verification email lands in Mailpit at http://localhost:8025.
+
+## Details
+
+### Signing in and choosing a company
+
+The admin login goes through the same sign-in page. A user with a single company gets it selected
+on login; otherwise `/tenants/` lists the user's companies, switches between them and creates a new
+one. Tenant models stay hidden in the admin until a company is active.
+
+### Ports
+
+Override them with environment variables or a `.env` file.
 
 | Service | URL / port | Variable |
 | --- | --- | --- |
@@ -66,18 +90,15 @@ Default host ports (override with environment variables or a `.env` file):
 | Mailpit UI | http://localhost:8025 | `MAILPIT_UI_PORT` |
 | Mailpit SMTP | localhost:1025 | `MAILPIT_SMTP_PORT` |
 
+### Database roles
+
 Containers connect to PostgreSQL as the unprivileged `invoicehub_app` role; only the migrate step
-uses `invoicehub_migrator`.
-
-### Signing in and choosing a company
-
-Sign in at http://localhost:8010/accounts/login/; the admin login goes through the same page. Email
-verification is mandatory, and in development the verification emails land in Mailpit
-(http://localhost:8025). A user with a single company gets it selected on login; otherwise
-`/tenants/` lists the user's companies, switches between them and creates a new one. Tenant models
-stay hidden in the admin until a company is active.
+uses `invoicehub_migrator`, which owns the tables. Host-side commands (pytest, migrate, runserver)
+connect as the migrator; `FORCE ROW LEVEL SECURITY` keeps the tenant policies applying to it as well.
 
 ### Checks and tests on the host
+
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.13, with the Compose stack running.
 
 ```bash
 cp .env.example .env             # connects as invoicehub_migrator on localhost:5442
@@ -90,16 +111,20 @@ uv run pytest -m isolation       # tenant isolation suite only (also part of the
 uv run pre-commit install        # optional: run the checks on every commit
 ```
 
-Host-side commands (pytest, migrate, runserver) connect as the migrator, which owns the tables;
-`FORCE ROW LEVEL SECURITY` keeps the tenant policies applying to it as well.
+## Design documents
 
-## Status
+The design lives in RFCs under [`docs/rfc/`](docs/rfc/). They are drafts and may change.
 
-Early development. In place: the project scaffold, Docker stack, database roles, tooling and CI;
-the tenancy foundation (request-scoped tenant context, Row-Level Security, the parametrized
-isolation suite); and authentication and roles (django-allauth email login with mandatory
-verification, memberships with owner, admin, accountant and viewer roles, company selection, and
-hashed, revocable per-tenant API tokens with scopes). Next: billing (RFC 0003).
+| RFC | Area | Main decision |
+| --- | --- | --- |
+| [0000](docs/rfc/0000-overview.md) | Overview | Scope, architecture, cross-cutting decisions and plan |
+| [0001](docs/rfc/0001-remitmatch.md) | remitmatch library | Rust + PyO3, split and grouped payments in v1 |
+| [0002](docs/rfc/0002-tenancy.md) | Multi-tenancy and authentication | `tenant_id` column + Row-Level Security |
+| [0003](docs/rfc/0003-billing.md) | Billing domain | Gap-free numbering per series; issued invoice is immutable |
+| [0004](docs/rfc/0004-api-ui.md) | API and UI | GraphQL with django-graphex; HTMX for the UI |
+| [0005](docs/rfc/0005-reconciliation.md) | Bank reconciliation | Asynchronous import + review queue |
+| [0006](docs/rfc/0006-ai.md) | Applied AI | OpenRouter, tools with user permissions, evals in CI |
+| [0007](docs/rfc/0007-infra.md) | Infrastructure | Cloud Run + Cloud SQL; OpenTelemetry and Sentry |
 
 ## License
 
