@@ -136,7 +136,7 @@ def test_activate_action_selects_the_tenant_for_superusers(client: Client) -> No
         client: Django test client fixture.
     """
     scenario = Setup(client)
-    client.get(f"/admin/tenancy/tenant/{scenario.a.pk}/activate/")
+    client.post(f"/admin/tenancy/tenant/{scenario.a.pk}/activate/")
     body = client.get(LIST_URL).content.decode()
     assert "alpha-visible" in body
     assert "bravo-secret" not in body
@@ -152,5 +152,5 @@ def test_activate_action_is_refused_for_non_superusers(client: Client) -> None:
     staff = User.objects.create_user("staff", "staff@example.com", "pw", is_staff=True)
     staff.user_permissions.add(Permission.objects.get(codename="view_tenant"))
     client.force_login(staff)
-    assert client.get(f"/admin/tenancy/tenant/{scenario.a.pk}/activate/").status_code == 403
+    assert client.post(f"/admin/tenancy/tenant/{scenario.a.pk}/activate/").status_code == 403
     assert "tenant_id" not in client.session

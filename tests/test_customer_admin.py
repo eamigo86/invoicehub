@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from django.contrib.admin.models import LogEntry
 from django.test import Client
 
 import billing.admin
@@ -97,18 +98,77 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     return log
 
 
-def test_customer_admin_is_hidden_without_a_tenant(client: Client, tenant: Tenant) -> None:
-    """With no active tenant the customer admin is neither listed nor reachable.
+@pytest.mark.parametrize("path", ["", "add/", "{pk}/change/", "{pk}/delete/", "{pk}/history/"])
+def test_every_customer_admin_url_is_403_without_a_tenant(
+    client: Client, tenant: Tenant, path: str
+) -> None:
+    """With no active tenant each customer admin URL answers 403, never a crash or a page.
+
+    Args:
+        client: Django test client fixture.
+        tenant: Tenant owning customers.
+        path: URL suffix under the customer admin, with a placeholder for a primary key.
+    """
+    with tenant_context(tenant.pk):
+        pk = Customer.objects.get(name="Acme").pk
+    client.raise_request_exception = False
+    login(client, None)
+    assert client.get(LIST_URL + path.format(pk=pk)).status_code == 403
+
+
+def test_bulk_delete_without_a_tenant_is_403_and_deletes_nothing(
+    client: Client, tenant: Tenant
+) -> None:
+    """The delete-selected action cannot be used while no tenant is active.
 
     Args:
         client: Django test client fixture.
         tenant: Tenant owning customers.
     """
+    with tenant_context(tenant.pk):
+        pks = [str(c.pk) for c in Customer.objects.all()]
     client.raise_request_exception = False
     login(client, None)
-    assert client.get(LIST_URL).status_code == 403
-    assert client.get("/admin/billing/customer/add/").status_code == 403
+    data = {"action": "delete_selected", "_selected_action": pks, "post": "yes"}
+    assert client.post(LIST_URL, data).status_code == 403
+    with tenant_context(tenant.pk):
+        assert Customer.objects.count() == 2
+
+
+def test_customer_admin_is_not_listed_in_the_index_without_a_tenant(
+    client: Client, tenant: Tenant
+) -> None:
+    """The admin index does not offer the customer admin while no tenant is active.
+
+    Args:
+        client: Django test client fixture.
+        tenant: Tenant owning customers.
+    """
+    login(client, None)
     assert "/admin/billing/customer/" not in client.get("/admin/").content.decode()
+
+
+def test_admin_writes_leave_no_log_entries(client: Client, tenant: Tenant) -> None:
+    """Adding, changing and deleting through the admin never writes a LogEntry.
+
+    Object representations in the admin log would leak across tenants, so audit logging is
+    left to the services.
+
+    Args:
+        client: Django test client fixture.
+        tenant: Tenant owning customers.
+    """
+    with tenant_context(tenant.pk):
+        acme, bolt = Customer.objects.get(name="Acme"), Customer.objects.get(name="Bolt")
+    login(client, tenant.pk)
+    client.post(f"{LIST_URL}add/", {"name": "Cora", "tax_id": "", "email": ""})
+    client.post(f"{LIST_URL}{acme.pk}/change/", {"name": "Acme 2", "tax_id": "", "email": ""})
+    client.post(f"{LIST_URL}{acme.pk}/delete/", {"post": "yes"})
+    data = {"action": "delete_selected", "_selected_action": [str(bolt.pk)], "post": "yes"}
+    client.post(LIST_URL, data)
+    with tenant_context(tenant.pk):
+        assert sorted(Customer.objects.values_list("name", flat=True)) == ["Cora"]
+    assert LogEntry.objects.count() == 0
 
 
 def test_customer_admin_lists_the_active_tenants_customers(client: Client, tenant: Tenant) -> None:

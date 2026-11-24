@@ -1,0 +1,24 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+    <div class="border border-base-200 rounded-default shadow-xs dark:border-base-800">
+        <p class="font-semibold p-4 text-font-important-light dark:text-font-important-dark">
+            {% blocktranslate with name=tenant.name %}Activate the tenant "{{ name }}" for this session? Tenant models in the admin will then show this tenant's data.{% endblocktranslate %}
+        </p>
+
+        <form method="post" class="border-base-200 border-t px-4 py-3 dark:border-base-800">
+            {% csrf_token %}
+
+            <div class="flex items-center">
+                <button type="submit" class="bg-primary-600 border border-transparent cursor-pointer font-semibold px-3 py-2 rounded-default text-white">
+                    {% translate "Activate" %}
+                </button>
+
+                <a href="{% url 'admin:tenancy_tenant_changelist' %}" class="ml-4 text-sm">
+                    {% translate "Cancel" %}
+                </a>
+            </div>
+        </form>
+    </div>
+{% endblock %}
