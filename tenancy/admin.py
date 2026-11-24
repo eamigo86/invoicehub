@@ -8,12 +8,12 @@ from django.db.models import QuerySet
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.template.response import TemplateResponse
-from unfold.admin import ModelAdmin  # type: ignore[import-untyped]
+from unfold.admin import ModelAdmin, TabularInline  # type: ignore[import-untyped]
 from unfold.decorators import action  # type: ignore[import-untyped]
 
 from tenancy.context import get_current_tenant_id, parse_tenant_id
 
-from .models import Tenant
+from .models import Membership, Tenant
 
 
 class TenantModelAdmin(ModelAdmin):  # type: ignore[misc]
@@ -95,12 +95,21 @@ class TenantModelAdmin(ModelAdmin):  # type: ignore[misc]
         return get_current_tenant_id() is not None and bool(super().has_add_permission(request))
 
 
+class MembershipInline(TabularInline):  # type: ignore[misc]
+    """Edit the members of a tenant and their roles on the tenant page."""
+
+    model = Membership
+    extra = 0
+    raw_id_fields = ("user",)
+
+
 @admin.register(Tenant)
 class TenantAdmin(ModelAdmin):  # type: ignore[misc]
     """Unfold-styled admin listing tenants by name and creation time."""
 
     list_display = ("name", "created_at")
     search_fields = ("name",)
+    inlines = [MembershipInline]
     actions_row = ["activate"]
 
     def has_activate_permission(self, request: HttpRequest) -> bool:
