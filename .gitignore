@@ -21,7 +21,6 @@ coverage.xml
 
 # Local-only planning and translated docs
 odd/
-docs/rfc/es/
 
 # Built artifact (Tailwind)
 static/css/app.css

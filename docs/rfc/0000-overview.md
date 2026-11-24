@@ -4,7 +4,7 @@
 
 ## Problem, users and success metrics
 
-InvoiceHub is a multi-tenant invoicing SaaS for SMBs and freelancers that issues invoices, reconciles payments against the bank, and uses AI for repetitive work. It is a portfolio project: it has to actually work and demonstrate senior-level judgment.
+InvoiceHub is a multi-tenant invoicing SaaS for SMBs and freelancers that issues invoices, reconciles payments against the bank, and uses AI for repetitive work. It is a public reference project: it has to actually work and demonstrate senior-level judgment.
 
 **Problem.** SMBs invoice with spreadsheets or expensive tools, and then match bank payments to invoices by hand. It is slow, error-prone and does not scale.
 
@@ -14,7 +14,7 @@ InvoiceHub is a multi-tenant invoicing SaaS for SMBs and freelancers that issues
 - **Accountant / biller:** creates and sends invoices, reviews the reconciliation.
 - **Integrator:** uses the GraphQL API or the MCP server from another system or agent.
 
-**Who evaluates the project:** a hiring manager or senior engineer who reviews the repo, the live demo and the RFCs in 15–30 minutes.
+**Who reviews the project:** an engineer who goes through the repo, the live demo and the RFCs in 15–30 minutes.
 
 | Metric | Target |
 | --- | --- |
@@ -89,7 +89,7 @@ The web app enqueues to Redis and the worker consumes from there; both read and 
 
 ## Stack and cross-cutting decisions
 
-Django as the core because it is where the most experience is and what best solves a business domain with admin, ORM and migrations; the rest is chosen for being standard in senior job postings.
+Django as the core because it is where the most experience is and what best solves a business domain with admin, ORM and migrations; the rest is chosen for being the industry standard.
 
 | Layer | Choice | RFC |
 | --- | --- | --- |
@@ -133,11 +133,11 @@ Each area with its own decisions has its own RFC; 0001 is the reconciliation lib
 
 ## Weekly plan
 
-The public demo is in week 10 and the last two weeks are left for articles and polish; applications start in week 5, without waiting to finish.
+The public demo is in week 10 and the last two weeks are left for articles and polish.
 
 ```mermaid
 gantt
-    title Public demo in week 10; you apply from week 5
+    title Public demo in week 10
     dateFormat  X
     axisFormat  S%s
     section Blocks
@@ -149,7 +149,6 @@ gantt
     Deployment and observability    :8, 10
     Articles and polish             :10, 12
     section Milestones
-    Start applying                  :milestone, 4, 0
     remitmatch 0.1.0 on PyPI        :milestone, 5, 0
     Public demo on GCP              :milestone, 10, 0
 ```
@@ -158,11 +157,11 @@ Blocks overlap on purpose: remitmatch advances in parallel with billing, and the
 
 ## Project risks
 
-The biggest risk is scope: it is 12 weeks with English and a job search in parallel, so each RFC marks what can be cut.
+The biggest risk is scope: it is a 12-week plan, so each RFC marks what can be cut.
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
-| Scope too large | Incomplete demo when interviews start | Cuts already defined: dj-hyperview, MCP server and Terraform are optional |
+| Scope too large | Incomplete demo at the week 10 milestone | Cuts already defined: dj-hyperview, MCP server and Terraform are optional |
 | Data leak between tenants | Serious and visible failure in a code review | RLS in Postgres + mandatory isolation suite in CI (RFC 0002) |
 | LLM cost on the public demo | Unexpected OpenRouter bill | Per-tenant limit, cheap models by default and monthly spending cap (RFC 0006) |
 | Abuse of the public demo | Email spam, load | Real email delivery disabled in the demo tenant; rate limiting |

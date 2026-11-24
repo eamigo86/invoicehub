@@ -37,7 +37,7 @@ The gap it fills: today nothing combines a Python API, a Rust core, 1:N and N:1 
 | [Reconify](https://pkg.go.dev/github.com/reconifyhq/reconify) | Go | It has no Python interface |
 | [ReconProof](https://apify.com/zahi90/reconproof.md) | Closed | Commercial; it does cover split and grouped payments |
 
-For the portfolio it demonstrates three things: useful Rust in production, public API design and knowledge of the fintech domain.
+As a public project it demonstrates three things: useful Rust in production, public API design and knowledge of the fintech domain.
 
 ## v1 scope
 
@@ -280,7 +280,7 @@ remitmatch/
 | Similarity | `strsim` crate (Jaro-Winkler) | Simple and without heavy dependencies |
 | Arrow | `arrow-rs` + PyCapsule interface | Zero-copy input and output from Polars or pandas |
 | CI | GitHub Actions + `maturin-action` | Rust and Python tests, wheels per platform |
-| Publishing | Trusted Publishing on PyPI | No tokens; same flow you already use in your packages |
+| Publishing | Trusted Publishing on PyPI | No tokens; same flow as the author's other packages |
 
 Quality: `clippy` and `rustfmt` in Rust, `ruff` and `mypy` in Python, and coverage with Codecov as in django-graphex.
 
@@ -305,7 +305,7 @@ A synthetic data generator with a known solution serves both the accuracy tests 
 | Metrics | Total time, peak memory, precision and recall |
 | Tools | criterion (Rust), pytest-benchmark (Python) |
 
-The results go in the README as a table and chart, with the script to reproduce them. It is what will be shared the most on LinkedIn.
+The results go in the README as a table and chart, with the script to reproduce them.
 
 ## Integration with InvoiceHub
 
@@ -332,7 +332,7 @@ gantt
     1:1 core (model, normalization, reference, scoring, generator)       :2, 3
     Grouped payments (1:N, N:1, subset-sum, assignment, properties)      :3, 4
     Bindings and PyPI (PyO3, stubs, Arrow, wheels, 0.1.0)                :4, 5
-    Benchmarks and demo (README, docs, InvoiceHub, LinkedIn)             :5, 6
+    Benchmarks and demo (README, docs, InvoiceHub)             :5, 6
     Gate: 0.1.0 published on PyPI                                         :milestone, 5, 0
 ```
 
@@ -343,7 +343,7 @@ If week 4 runs long, 0.1.0 is published with only 1:1 and 1:N, and N:1 goes into
 - [ ] Reserve the name by publishing an empty 0.0.1 on PyPI and crates.io
 - [ ] Default score weights: tune them with the generator data
 - [ ] Candidate limit for the group search (24 is an initial estimate)
-- [ ] License: MIT like your other packages, or Apache-2.0 as is usual in Rust
+- [ ] License: MIT like the author's other packages, or Apache-2.0 as is usual in Rust
 
 ## Alternatives considered
 
@@ -353,7 +353,7 @@ Rust with PyO3 is chosen because it is the only option that gives performance, a
 | --- | --- | --- |
 | Pure Python + rapidfuzz | Faster to write; rapidfuzz is already C++ | The expensive part (indexes, groups, assignment) stays in Python and neither scales nor parallelizes |
 | Polars without custom Rust | Vectorized, nothing to compile | 1:N and N:1 groups are not well expressed as dataframe operations |
-| Cython or Numba | Direct integration with Python | Worse ergonomics for complex data structures and less value in the portfolio |
+| Cython or Numba | Direct integration with Python | Worse ergonomics for complex data structures and less value as a showcase |
 | Deploy hyperswitch-reconciliation | Rust engine from a payments company, with 1:1, 1:N and N:M | It is a separate service with its own API and Postgres; for InvoiceHub it would be one more piece to operate, and it is not a library called from Python |
 | Use recon-kit from Rust | Careful design: integers and ambiguous matches sent to review | 1:1 only and no tolerances, by design; the groups and the bindings would have to be added anyway |
 | Reuse OpenRec | Already proven Rust engine | It is a CLI with rules in Lua, not a library; no grouped invoice payments |

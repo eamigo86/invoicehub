@@ -20,7 +20,7 @@ The public API is GraphQL with django-graphex and the UI is server-rendered with
 - **Subscriptions** (optional): import and reconciliation progress via Django Channels.
 - **Errors:** typed domain errors in the mutation payload, not generic exceptions.
 
-Using your own library in a real project is part of the value: any gap that appears becomes an improvement to django-graphex with its issue and its PR.
+Using django-graphex, the author's own library, in a real project is part of the value: any gap that appears becomes an improvement to django-graphex with its issue and its PR.
 
 ## UI
 
@@ -40,7 +40,7 @@ Using your own library in a real project is part of the value: any gap that appe
 
 | Alternative | Why it was rejected |
 | --- | --- |
-| REST with django-ninja | More common in job postings, but it does not showcase your library; it can be added later on top of the same services |
+| REST with django-ninja | More common in the industry, but it does not exercise django-graphex; it can be added later on top of the same services |
 | Strawberry or graphene-django | Standard, but the goal is to use and improve django-graphex |
 | Datastar instead of HTMX | Less well known; HTMX is what is expected in the Django ecosystem |
 | SPA with React | Outside the backend profile and adds Node to the build |
