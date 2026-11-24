@@ -21,7 +21,9 @@ class Permission(StrEnum):
 ROLE_PERMISSIONS: dict[Membership.Role, frozenset[Permission]] = {
     Membership.Role.OWNER: frozenset(Permission),
     Membership.Role.ADMIN: frozenset(Permission),
-    Membership.Role.ACCOUNTANT: frozenset(Permission) - {Permission.TOKENS_MANAGE},
+    Membership.Role.ACCOUNTANT: frozenset(
+        {Permission.INVOICES_READ, Permission.INVOICES_WRITE, Permission.RECONCILIATION_WRITE}
+    ),
     Membership.Role.VIEWER: frozenset({Permission.INVOICES_READ}),
 }
 
