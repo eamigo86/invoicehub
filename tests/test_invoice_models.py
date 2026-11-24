@@ -145,8 +145,8 @@ def test_a_line_out_of_range_is_invalid(tenant: Tenant, overrides: dict[str, Any
         line.full_clean()
 
 
-def test_a_line_tax_keeps_its_snapshot_when_the_rate_is_deleted(tenant: Tenant) -> None:
-    """Deleting the configured rate clears the link and keeps the name and rate of the tax.
+def test_a_rate_used_by_a_line_tax_cannot_be_deleted(tenant: Tenant) -> None:
+    """Deleting the configured rate is protected and the tax keeps its link and snapshot.
 
     Args:
         tenant: Active tenant.
@@ -155,13 +155,14 @@ def test_a_line_tax_keeps_its_snapshot_when_the_rate_is_deleted(tenant: Tenant) 
     line = make_line(make_invoice())
     line.save()
     InvoiceLineTax.objects.create(line=line, tax_rate=rate, name="Austin", rate_bp=825, amount=165)
-    rate.delete()
+    with pytest.raises(ProtectedError):
+        rate.delete()
     tax = line.taxes.get()
-    assert (tax.tax_rate, tax.name, tax.rate_bp, tax.amount) == (None, "Austin", 825, 165)
+    assert (tax.tax_rate, tax.name, tax.rate_bp, tax.amount) == (rate, "Austin", 825, 165)
 
 
-def test_deleting_a_product_keeps_the_line(tenant: Tenant) -> None:
-    """The product link is optional and cleared when the product goes away.
+def test_a_product_used_by_a_line_cannot_be_deleted(tenant: Tenant) -> None:
+    """The product link is optional, but a product a line points at is protected.
 
     Args:
         tenant: Active tenant.
@@ -169,9 +170,10 @@ def test_deleting_a_product_keeps_the_line(tenant: Tenant) -> None:
     product = Product.objects.create(name="Widget", unit_price=1000)
     line = make_line(make_invoice(), product=product)
     line.save()
-    product.delete()
+    with pytest.raises(ProtectedError):
+        product.delete()
     line.refresh_from_db()
-    assert line.product is None
+    assert line.product == product
 
 
 def test_deleting_an_invoice_deletes_its_lines_and_taxes(tenant: Tenant) -> None:

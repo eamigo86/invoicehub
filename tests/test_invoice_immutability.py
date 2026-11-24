@@ -7,12 +7,22 @@ from typing import Any
 
 import pytest
 from django.db import IntegrityError, connection
+from django.db.models import ProtectedError
+from django.test import Client
 from django.utils import timezone
 
-from billing.models import Customer, Invoice, InvoiceLine, InvoiceLineTax, TaxRate
-from billing.services import DraftLine, delete_draft, issue_invoice, save_draft
+from accounts.models import User
+from billing.models import Customer, Invoice, InvoiceLine, InvoiceLineTax, Product, TaxRate
+from billing.services import (
+    DraftLine,
+    delete_draft,
+    delete_product,
+    delete_tax_rate,
+    issue_invoice,
+    save_draft,
+)
 from tenancy.context import tenant_context
-from tenancy.models import Tenant
+from tenancy.models import Membership, Tenant
 from tenancy.permissions import Permission, Principal
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -249,3 +259,104 @@ def test_a_line_whose_invoice_is_invisible_is_refused(world: World) -> None:
             quantity=1,
             unit_price=1,
         )
+
+
+def issue_with_product(world: World) -> tuple[Product, InvoiceLine]:
+    """Issue an invoice whose line points at a new product.
+
+    Args:
+        world: World whose tenant is activated.
+
+    Returns:
+        The product and the issued line.
+    """
+    with tenant_context(world.tenant.pk):
+        product = Product.objects.create(name="Gadget", unit_price=500)
+        customer = world.issued.customer
+        lines = [DraftLine("Gadget", Decimal("1"), 500, product=product)]
+        issued = issue_invoice(
+            world.writer, save_draft(world.writer, Invoice(customer=customer), lines)
+        )
+        return product, issued.lines.get()
+
+
+def test_a_tax_rate_used_on_an_issued_invoice_cannot_be_deleted(world: World) -> None:
+    """Deleting the rate is protected and the issued line tax keeps its link and snapshot.
+
+    Args:
+        world: World whose tenant is activated.
+    """
+    with tenant_context(world.tenant.pk):
+        rate = world.issued_tax.tax_rate
+        assert rate is not None
+        with pytest.raises(ProtectedError):
+            delete_tax_rate(Principal(world.tenant.pk, frozenset(Permission)), rate)
+        tax = InvoiceLineTax.objects.get(pk=world.issued_tax.pk)
+        assert (tax.tax_rate_id, tax.name, tax.rate_bp) == (rate.pk, "Sales", 825)
+
+
+def test_a_product_used_on_an_issued_invoice_cannot_be_deleted(world: World) -> None:
+    """Deleting the product is protected and the issued line keeps its link.
+
+    Args:
+        world: World whose tenant is activated.
+    """
+    product, line = issue_with_product(world)
+    with tenant_context(world.tenant.pk):
+        with pytest.raises(ProtectedError):
+            delete_product(world.writer, product)
+        assert InvoiceLine.objects.get(pk=line.pk).product_id == product.pk
+
+
+def test_unused_products_and_tax_rates_still_delete(world: World) -> None:
+    """Rows no invoice line points at are deleted as before.
+
+    Args:
+        world: World whose tenant is activated.
+    """
+    owner = Principal(world.tenant.pk, frozenset(Permission))
+    with tenant_context(world.tenant.pk):
+        product = Product.objects.create(name="Unused", unit_price=1)
+        rate = TaxRate.objects.create(name="Unused", rate_bp=1)
+        delete_product(owner, product)
+        delete_tax_rate(owner, rate)
+        assert not Product.objects.filter(name="Unused").exists()
+        assert not TaxRate.objects.filter(name="Unused").exists()
+
+
+def test_a_product_used_on_a_draft_is_protected_too(world: World) -> None:
+    """A product used only on a draft is protected too, until the draft line goes away.
+
+    Args:
+        world: World whose tenant is activated.
+    """
+    with tenant_context(world.tenant.pk):
+        product = Product.objects.create(name="Drafty", unit_price=1)
+        lines = [DraftLine("D", Decimal("1"), 1, product=product)]
+        save_draft(world.writer, Invoice(customer=world.draft.customer), lines)
+        with pytest.raises(ProtectedError):
+            delete_product(world.writer, product)
+
+
+def test_the_admin_shows_the_protection_page_for_a_used_product(
+    world: World, client: Client
+) -> None:
+    """The delete page of a used product explains the protection instead of failing with a 500.
+
+    Args:
+        world: World whose tenant is activated.
+        client: Test client.
+    """
+    product, _ = issue_with_product(world)
+    user = User.objects.create_superuser("root", "root@example.com", "pw")
+    Membership.objects.create(user=user, tenant=world.tenant, role=Membership.Role.ADMIN)
+    client.force_login(user)
+    session = client.session
+    session["tenant_id"] = str(world.tenant.pk)
+    session.save()
+    url = f"/admin/billing/product/{product.pk}/delete/"
+    for response in (client.get(url), client.post(url, {"post": "yes"})):
+        assert response.status_code == 200
+        assert "protected" in response.content.decode()
+    with tenant_context(world.tenant.pk):
+        assert Product.objects.filter(pk=product.pk).exists()
