@@ -65,7 +65,7 @@ ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
 ACCOUNT_EMAIL_VERIFICATION = "mandatory"
 ACCOUNT_UNIQUE_EMAIL = True
 # Interim target until the tenant selection page exists.
-LOGIN_REDIRECT_URL = "account_email"
+LOGIN_REDIRECT_URL = "tenancy:list"
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -115,4 +115,9 @@ STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-UNFOLD = {"SITE_TITLE": "InvoiceHub", "SITE_HEADER": "InvoiceHub"}
+UNFOLD = {
+    "SITE_TITLE": "InvoiceHub",
+    "SITE_HEADER": "InvoiceHub",
+    "SITE_URL": "/tenants/",
+    "SITE_DROPDOWN": [{"icon": "swap_horiz", "title": "Switch tenant", "link": "/tenants/"}],
+}
