@@ -11,13 +11,16 @@ another tenant raises ValidationError.
 # keys would enforce it in the database.
 
 import uuid
+import zoneinfo
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
+from django.utils import timezone
 
 from billing.calculations import LineInput, TaxRateInput, invoice_totals
 from billing.models import (
@@ -26,6 +29,7 @@ from billing.models import (
     Invoice,
     InvoiceLine,
     InvoiceLineTax,
+    InvoiceSeries,
     Product,
     ProductTaxRate,
     TaxRate,
@@ -303,7 +307,10 @@ def _snapshot(invoice: Invoice) -> dict[str, Any]:
 
 
 def _stored_draft(invoice: Invoice) -> Invoice | None:
-    """Look up the stored copy of an invoice, requiring it to be a draft.
+    """Look up and lock the stored copy of an invoice, requiring it to be a draft.
+
+    The row lock is held until the surrounding transaction ends, so editing and issuing the same
+    invoice are serialized.
 
     Args:
         invoice: Invoice whose stored copy is wanted.
@@ -314,7 +321,7 @@ def _stored_draft(invoice: Invoice) -> Invoice | None:
     Raises:
         InvalidTransition: When the stored invoice is not a draft.
     """
-    stored = Invoice.objects.filter(pk=invoice.pk).first()
+    stored = Invoice.objects.select_for_update().filter(pk=invoice.pk).first()
     if stored is not None and stored.status != Invoice.Status.DRAFT:
         raise InvalidTransition(f"invoice is {stored.status}, only a draft can change")
     return stored
@@ -412,3 +419,115 @@ def delete_draft(principal: Principal | None, invoice: Invoice) -> None:
         return
     record_event(principal, "invoice.deleted", "invoice", stored.pk, _snapshot(stored))
     stored.delete()
+
+
+PAYMENT_TERM_DAYS = 30
+"""Days after the issue date that an invoice falls due when its draft has no usable due date."""
+
+DEFAULT_PREFIXES = {Invoice.Kind.INVOICE: "INV-", Invoice.Kind.CREDIT_NOTE: "CN-"}
+"""Prefix of the series created for each kind the first time a document of it is issued."""
+
+REQUIRED_ISSUER_FIELDS = ["legal_name", "address_line1", "city", "state", "postal_code"]
+"""Tenant columns that must be filled in before an invoice can be issued."""
+
+
+def _next_reference(kind: str, issue_year: int) -> tuple[InvoiceSeries, int, str]:
+    """Take the next number of the current tenant's series for a kind.
+
+    The series is created on first use and locked, so concurrent issues queue up behind each
+    other. The counter restarts at 1 when the issue year is later than the series year. Taking
+    the number and incrementing the counter happen in the caller's transaction, so a rollback
+    gives the number back and no number is skipped or reused.
+
+    Args:
+        kind: Kind of document being numbered.
+        issue_year: Year of the issue date.
+
+    Returns:
+        The locked series, the number taken and the display reference built from them.
+    """
+    created, _ = InvoiceSeries.objects.get_or_create(
+        kind=kind, defaults={"prefix": DEFAULT_PREFIXES[Invoice.Kind(kind)], "year": issue_year}
+    )
+    series = InvoiceSeries.objects.select_for_update().get(pk=created.pk)
+    if issue_year > series.year:
+        series.year, series.next_number = issue_year, 1
+    number = series.next_number
+    series.next_number = number + 1
+    series.save(update_fields=["year", "next_number"])
+    return series, number, f"{series.prefix}{series.year}-{number:05d}"
+
+
+@transaction.atomic
+def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
+    """Issue a draft: number it, freeze the issuer and customer details and set its dates.
+
+    The issue date is today in the timezone of the tenant, and the due date is kept when it is
+    not before the issue date, otherwise it is PAYMENT_TERM_DAYS days later. The invoice
+    receives the next number of its series and a reference such as INV-2026-00001, which is
+    stored so that a later prefix change never alters it. InvalidTransition is raised when the
+    invoice is not a draft, and the event invoice.issued is recorded in the audit log. The
+    invoice row is locked, so issuing and editing the same draft are serialized.
+
+    Args:
+        principal: Acting principal, who needs invoices:write or PermissionDenied is raised.
+        invoice: Draft invoice to issue.
+
+    Returns:
+        The issued invoice.
+
+    Raises:
+        Invoice.DoesNotExist: When the invoice is not stored for the current tenant.
+        ValidationError: When the invoice has no lines or the issuer details are incomplete.
+    """
+    require_permission(principal, Permission.INVOICES_WRITE)
+    stored = _stored_draft(invoice)
+    if stored is None:
+        raise Invoice.DoesNotExist("invoice is not stored for the current tenant")
+    if not stored.lines.exists():
+        raise ValidationError("An invoice needs at least one line to be issued.")
+    tenant = Tenant.objects.get(pk=require_current_tenant_id())
+    missing = [name for name in REQUIRED_ISSUER_FIELDS if not getattr(tenant, name)]
+    if missing:
+        raise ValidationError(f"The issuer details are incomplete: {', '.join(missing)}.")
+    before = _snapshot(stored)
+    now = timezone.now()
+    today = now.astimezone(zoneinfo.ZoneInfo(tenant.timezone)).date()
+    series, number, reference = _next_reference(stored.kind, today.year)
+    customer = stored.customer
+    stored.series, stored.number, stored.year, stored.reference = (
+        series,
+        number,
+        series.year,
+        reference,
+    )
+    stored.issuer = {
+        "legal_name": tenant.legal_name,
+        "ein": tenant.ein,
+        "address_line1": tenant.address_line1,
+        "address_line2": tenant.address_line2,
+        "city": tenant.city,
+        "state": tenant.state,
+        "postal_code": tenant.postal_code,
+        "country": tenant.country,
+        "currency": tenant.default_currency,
+    }
+    stored.customer_details = {
+        "name": customer.name,
+        "tax_id": customer.tax_id,
+        "emails": customer.emails,
+        "address_line1": customer.address_line1,
+        "address_line2": customer.address_line2,
+        "city": customer.city,
+        "state": customer.state,
+        "postal_code": customer.postal_code,
+        "country": customer.country,
+    }
+    stored.issued_at, stored.issue_date = now, today
+    if stored.due_date is None or stored.due_date < today:
+        stored.due_date = today + timedelta(days=PAYMENT_TERM_DAYS)
+    stored.status = Invoice.Status.ISSUED
+    stored.save()
+    after = _snapshot(stored) | {"reference": reference}
+    record_event(principal, "invoice.issued", "invoice", stored.pk, before, after)
+    return stored

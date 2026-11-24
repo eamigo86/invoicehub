@@ -24,6 +24,7 @@ from billing.models import (
     Invoice,
     InvoiceLine,
     InvoiceLineTax,
+    InvoiceSeries,
     Product,
     ProductTaxRate,
     TaxRate,
@@ -129,6 +130,18 @@ def make_invoice_line_tax() -> TenantModel:
     return tax
 
 
+def make_invoice_series() -> TenantModel:
+    """Create the invoice series of the active tenant.
+
+    Returns:
+        The saved series.
+    """
+    series: TenantModel = InvoiceSeries.objects.create(
+        kind=Invoice.Kind.INVOICE, prefix="INV-", year=2026
+    )
+    return series
+
+
 FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {
     Customer: make_customer,
     TaxRate: make_tax_rate,
@@ -138,6 +151,7 @@ FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {
     Invoice: make_invoice,
     InvoiceLine: make_invoice_line,
     InvoiceLineTax: make_invoice_line_tax,
+    InvoiceSeries: make_invoice_series,
 }
 
 ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {
@@ -177,6 +191,8 @@ def clone_values(model: type[TenantModel]) -> dict[str, Any]:
         return {"tax_rate_id": make_tax_rate().pk}
     if model is InvoiceLine:
         return {"position": 2}
+    if model is InvoiceSeries:
+        return {"kind": Invoice.Kind.CREDIT_NOTE, "prefix": f"CN-{uuid.uuid4().hex[:8]}"}
     if model is Invoice:
         return {"notes": f"clone-{uuid.uuid4().hex}"}
     return {ADMIN_MARKER_FIELDS.get(model, "name"): f"clone-{uuid.uuid4().hex}"}
@@ -356,6 +372,7 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.services.record_event",
         "billing.services.save_draft",
         "billing.services.delete_draft",
+        "billing.services.issue_invoice",
     }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.
