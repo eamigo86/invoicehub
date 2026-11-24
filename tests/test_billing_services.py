@@ -148,3 +148,25 @@ def test_update_issuer_needs_settings_manage() -> None:
         with pytest.raises(PermissionDenied):
             update_issuer(writer(tenant), tenant)
     assert Tenant.objects.get(pk=tenant.pk).legal_name == ""
+
+
+def test_save_customer_rejects_an_invalid_email() -> None:
+    """Every address in emails is validated before saving."""
+    tenant = Tenant.objects.create(name="A")
+    with tenant_context(tenant.pk):
+        with pytest.raises(ValidationError):
+            save_customer(writer(tenant), Customer(name="Acme", emails=["ok@example.com", "bad"]))
+        assert Customer.objects.count() == 0
+
+
+def test_save_customer_stores_emails_and_address() -> None:
+    """A customer keeps several emails and a postal address."""
+    tenant = Tenant.objects.create(name="A")
+    with tenant_context(tenant.pk):
+        saved = save_customer(
+            writer(tenant),
+            Customer(name="Acme", emails=["a@example.com", "b@example.com"], city="Denver"),
+        )
+        stored = Customer.objects.get(pk=saved.pk)
+        assert stored.emails == ["a@example.com", "b@example.com"]
+        assert (stored.city, stored.country) == ("Denver", "US")

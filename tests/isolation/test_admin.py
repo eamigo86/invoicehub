@@ -10,14 +10,13 @@ from typing import Any
 
 import pytest
 from django.contrib import admin
-from django.db import models
 from django.test import Client
 from django.urls import reverse
 
 from accounts.models import User
 from tenancy.context import tenant_context
 from tenancy.models import Membership, Tenant, TenantModel
-from tests.isolation.registry import FACTORIES
+from tests.isolation.registry import ADMIN_MARKER_FIELDS, FACTORIES
 
 pytestmark = [pytest.mark.isolation, pytest.mark.django_db(transaction=True)]
 
@@ -30,24 +29,6 @@ def tenant_admin_models() -> list[type[TenantModel]]:
     """
     found = [m for m in admin.site._registry if issubclass(m, TenantModel) and not m._meta.abstract]
     return sorted(found, key=lambda m: m.__name__)
-
-
-def hostile_data(model: type[TenantModel]) -> dict[str, str]:
-    """Build form data that would rename every text field of a row.
-
-    Args:
-        model: Model whose admin form is posted.
-
-    Returns:
-        Field values for the text and email fields of the model.
-    """
-    data: dict[str, str] = {}
-    for field in model._meta.fields:
-        if isinstance(field, models.EmailField):
-            data[field.name] = "hijacked@example.com"
-        elif isinstance(field, models.CharField) and field.editable and not field.primary_key:
-            data[field.name] = "hijacked"
-    return data
 
 
 def listed_pks(response: Any) -> list[object]:
@@ -121,6 +102,32 @@ class Scenario:
         opts = self.model._meta
         name = f"admin:{opts.app_label}_{opts.model_name}_{kind}"
         return reverse(name, args=[row.pk] if row else [])
+
+    def hostile_data(self) -> dict[str, str]:
+        """Build a valid change form POST for A's row that hijacks one designated text field.
+
+        The data starts from what the admin's own change form renders for the row, so it is
+        valid whatever the field types, and only the field named in ADMIN_MARKER_FIELDS is
+        overridden with the marker "hijacked".
+
+        Returns:
+            Field values as the browser would post them.
+        """
+        reader = Client()
+        reader.force_login(self.root)
+        session = reader.session
+        session["tenant_id"] = str(self.a.pk)
+        session.save()
+        form = reader.get(self.url("change", self.a_row)).context["adminform"].form
+        data: dict[str, str] = {}
+        for name in form.fields:
+            value = form[name].value()
+            if value is True:
+                data[name] = "on"
+            elif value is not None and value is not False:
+                data[name] = str(value)
+        data[ADMIN_MARKER_FIELDS.get(self.model, "name")] = "hijacked"
+        return data
 
     def activate(self, tenant_id: uuid.UUID) -> None:
         """Put a tenant in the session.
@@ -202,7 +209,7 @@ def test_posts_to_foreign_rows_change_nothing_but_own_rows_still_work(scenario: 
     """
     before = scenario.snapshot(scenario.b, scenario.b_row)
     scenario.activate(scenario.a.pk)
-    data = hostile_data(scenario.model)
+    data = scenario.hostile_data()
     scenario.client.post(scenario.url("change", scenario.b_row), data)
     scenario.client.post(scenario.url("delete", scenario.b_row), {"post": "yes"})
     assert scenario.snapshot(scenario.b, scenario.b_row) == before
@@ -249,7 +256,7 @@ def test_viewer_can_view_but_not_write(scenario: Scenario) -> None:
     assert scenario.client.get(scenario.url("changelist")).status_code == 200
     assert scenario.client.get(scenario.url("change", scenario.a_row)).status_code == 200
     assert scenario.client.get(scenario.url("add")).status_code == 403
-    data = hostile_data(scenario.model)
+    data = scenario.hostile_data()
     assert scenario.client.post(scenario.url("add"), data).status_code == 403
     assert scenario.client.post(scenario.url("change", scenario.a_row), data).status_code == 403
     delete = scenario.url("delete", scenario.a_row)

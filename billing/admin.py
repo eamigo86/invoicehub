@@ -18,8 +18,19 @@ from .services import delete_customer, save_customer
 class CustomerAdmin(TenantModelAdmin):
     """Admin for the active tenant's customers; every write goes through the services."""
 
-    list_display = ("name", "tax_id", "email")
-    search_fields = ("name",)
+    list_display = ("name", "tax_id", "emails", "city", "state")
+    search_fields = ("name", "tax_id", "emails")
+    fields = (
+        "name",
+        "tax_id",
+        "emails",
+        "address_line1",
+        "address_line2",
+        "city",
+        "state",
+        "postal_code",
+        "country",
+    )
 
     def save_model(
         self, request: HttpRequest, obj: Customer, form: "ModelForm[Any]", change: bool

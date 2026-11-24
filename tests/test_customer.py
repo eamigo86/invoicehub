@@ -16,7 +16,10 @@ from tenancy.models import Tenant
 pytestmark = pytest.mark.django_db
 
 COUNT = "SELECT count(*) FROM billing_customer"
-INSERT = "INSERT INTO billing_customer (tenant_id, name, tax_id, email) VALUES (%s, 'X', '', '')"
+INSERT = (
+    "INSERT INTO billing_customer (tenant_id, name, tax_id, emails, address_line1, address_line2,"
+    " city, state, postal_code, country) VALUES (%s, 'X', '', '{}', '', '', '', '', '', 'US')"
+)
 
 
 @pytest.fixture

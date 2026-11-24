@@ -1,11 +1,13 @@
 """Billing models."""
 
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
+from core.models import PostalAddress
 from tenancy.models import TenantModel
 
 
-class Customer(TenantModel):
+class Customer(TenantModel, PostalAddress):
     """A person or company that is invoiced by a tenant.
 
     Its data is copied onto an invoice when the invoice is issued, so editing a customer
@@ -13,8 +15,8 @@ class Customer(TenantModel):
     """
 
     name = models.CharField(max_length=200)
-    tax_id = models.CharField(max_length=50, blank=True)
-    email = models.EmailField(blank=True)
+    tax_id = models.CharField(max_length=50, blank=True)  # optional EIN
+    emails = ArrayField(models.EmailField(), default=list, blank=True)
 
     def __str__(self) -> str:
         """Return the customer name.
