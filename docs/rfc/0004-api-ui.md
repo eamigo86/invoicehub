@@ -75,7 +75,7 @@ The exact filter and pagination syntax is whatever django-graphex generates; thi
 
 | Alternative | Why it was rejected |
 | --- | --- |
-| REST with django-ninja | More common in the industry, but it does not exercise django-graphex; it can be added later on top of the same services |
+| REST with django-ninja | More common in the industry and simpler for basic integrations. Rejected for v1 because the goal is to use and improve django-graphex; since the logic lives in the services, a REST API can be added later without touching the domain |
 | Strawberry or graphene-django | Standard, but the goal is to use and improve django-graphex |
 | Datastar instead of HTMX | Less well known; HTMX is what is expected in the Django ecosystem |
 | SPA with React | Outside the backend profile and adds Node to the build |
