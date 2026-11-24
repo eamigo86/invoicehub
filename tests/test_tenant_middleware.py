@@ -5,8 +5,10 @@ from typing import Any
 
 import pytest
 from django.contrib.auth.models import AnonymousUser
+from django.db import connection
 from django.http import HttpRequest, HttpResponse
 from django.test import Client, RequestFactory
+from django.test.utils import CaptureQueriesContext
 
 from accounts.models import User
 from tenancy.context import get_current_tenant_id
@@ -179,3 +181,12 @@ def test_request_transaction_carries_the_session_tenant(client: Client) -> None:
     assert probe(client, str(tenant.pk)) == str(tenant.pk)
     assert probe(client, None) == ""
     assert probe(client, "not-a-uuid") == ""
+
+
+@pytest.mark.django_db
+def test_a_session_without_tenant_skips_the_membership_lookup() -> None:
+    """Requests that name no tenant cost no membership query."""
+    user, _ = member(Membership.Role.VIEWER)
+    with CaptureQueriesContext(connection) as queries:
+        run({}, user)
+    assert not [q for q in queries.captured_queries if "tenancy_membership" in q["sql"]]
