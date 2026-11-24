@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Tooling caches and coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Local environment and OS files
+.env
+.DS_Store
+
+# Local-only planning and translated docs
+odd/
+docs/rfc/es/
+
+# Built artifact (Tailwind)
+static/css/app.css
