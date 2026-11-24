@@ -63,6 +63,7 @@ addopts = "--strict-markers"
 markers = ["isolation: tenant isolation suite"]
 
 [tool.coverage.run]
+source = ["."]
 omit = ["*/migrations/*", "tests/*", "manage.py", "config/asgi.py", "config/wsgi.py"]
 
 [tool.coverage.report]
