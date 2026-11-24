@@ -1,0 +1,89 @@
+name: invoicehub
+
+x-app-env: &app-env
+  SECRET_KEY: ${SECRET_KEY:-local-dev-only-not-a-secret}
+  DEBUG: ${DEBUG:-True}
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS:-*}
+  DATABASE_URL: postgres://invoicehub_app:${INVOICEHUB_APP_PASSWORD:-app-dev-pw}@postgres:5432/invoicehub
+  DATABASE_APP_ROLE: invoicehub_app
+  CELERY_BROKER_URL: redis://redis:6379/0
+  EMAIL_URL: smtp://mailpit:1025
+  ENV_FILE: /nonexistent
+
+x-app: &app
+  build: .
+  image: invoicehub:dev
+  volumes:
+    - .:/app
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  web:
+    <<: *app
+    command:
+      - sh
+      - -c
+      - DATABASE_URL="$$MIGRATOR_DATABASE_URL" python manage.py migrate --noinput && python manage.py runserver 0.0.0.0:8000
+    environment:
+      <<: *app-env
+      # Only the migrate step runs as the migrator role; runserver uses DATABASE_URL (app role).
+      MIGRATOR_DATABASE_URL: postgres://invoicehub_migrator:${INVOICEHUB_MIGRATOR_PASSWORD:-migrator-dev-pw}@postgres:5432/invoicehub
+    ports:
+      - "${WEB_PORT:-8010}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/admin/login/')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  worker:
+    <<: *app
+    command: celery -A config worker -l info
+    environment: *app-env
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$HOSTNAME"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-postgres-dev-pw}
+      INVOICEHUB_MIGRATOR_PASSWORD: ${INVOICEHUB_MIGRATOR_PASSWORD:-migrator-dev-pw}
+      INVOICEHUB_APP_PASSWORD: ${INVOICEHUB_APP_PASSWORD:-app-dev-pw}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-init-roles.sh:ro
+    ports:
+      - "${POSTGRES_PORT:-5442}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d invoicehub"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "${REDIS_PORT:-6390}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:v1.21
+    ports:
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+
+volumes:
+  pgdata:
