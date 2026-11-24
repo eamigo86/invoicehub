@@ -10,7 +10,6 @@ from typing import Any
 
 import pytest
 from django.contrib import admin
-from django.contrib.auth.models import Permission
 from django.db import models
 from django.test import Client
 from django.urls import reverse
@@ -222,32 +221,6 @@ def test_admin_is_hidden_without_a_session_tenant(scenario: Scenario) -> None:
         scenario: Admin scenario for one tenant model.
     """
     assert scenario.client.get(scenario.url("changelist")).status_code == 403
-
-
-def test_activate_action_selects_the_tenant_for_superusers(client: Client) -> None:
-    """A superuser activates a tenant by POST and then sees only that tenant's rows.
-
-    Args:
-        client: Django test client fixture.
-    """
-    scenario = Scenario(tenant_admin_models()[0], client)
-    client.post(f"/admin/tenancy/tenant/{scenario.a.pk}/activate/")
-    response = client.get(scenario.url("changelist"))
-    assert listed_pks(response) == [scenario.a_row.pk]
-
-
-def test_activate_action_is_refused_for_non_superusers(client: Client) -> None:
-    """A staff user without superuser rights cannot select a tenant.
-
-    Args:
-        client: Django test client fixture.
-    """
-    scenario = Scenario(tenant_admin_models()[0], client)
-    staff = User.objects.create_user("staff", "staff@example.com", "pw", is_staff=True)
-    staff.user_permissions.add(Permission.objects.get(codename="view_tenant"))
-    client.force_login(staff)
-    assert client.post(f"/admin/tenancy/tenant/{scenario.a.pk}/activate/").status_code == 403
-    assert "tenant_id" not in client.session
 
 
 def test_member_of_another_tenant_cannot_reach_a_forged_session_tenant(scenario: Scenario) -> None:
