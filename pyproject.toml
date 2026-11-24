@@ -7,6 +7,7 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
     "celery[redis]>=5.7.0",
     "django>=6.1,<6.2",
+    "django-allauth>=65.22.1",
     "django-environ>=0.14.0",
     "django-unfold>=0.110.1",
     "gunicorn>=27.0.1",
@@ -53,7 +54,7 @@ plugins = ["mypy_django_plugin.main"]
 django_settings_module = "config.settings"
 
 [[tool.mypy.overrides]]
-module = ["celery", "celery.*"]
+module = ["celery", "celery.*", "allauth", "allauth.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
