@@ -24,6 +24,8 @@ DEBUG: bool = env.bool("DEBUG", default=False)
 ALLOWED_HOSTS: list[str] = env.list("ALLOWED_HOSTS", default=[])
 
 DATABASES = {"default": env.db("DATABASE_URL")}
+DATABASES["default"]["ENGINE"] = "tenancy.db_backend"
+DATABASES["default"]["ATOMIC_REQUESTS"] = True
 DATABASE_APP_ROLE: str = validate_role_name(env("DATABASE_APP_ROLE", default="invoicehub_app"))
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -55,6 +57,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "tenancy.middleware.TenantMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
