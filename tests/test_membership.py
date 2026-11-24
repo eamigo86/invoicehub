@@ -19,7 +19,7 @@ def test_a_membership_links_a_user_to_a_tenant_with_a_role() -> None:
     user = User.objects.create_user("ann", "ann@example.com", "pw")
     tenant = Tenant.objects.create(name="Acme")
     membership = Membership.objects.create(user=user, tenant=tenant, role=Membership.Role.VIEWER)
-    assert list(user.memberships.all()) == [membership]  # type: ignore[attr-defined]
+    assert list(user.memberships.all()) == [membership]
     assert list(tenant.memberships.all()) == [membership]
     assert str(membership) == "ann @ Acme (viewer)"
     assert membership.created_at is not None
