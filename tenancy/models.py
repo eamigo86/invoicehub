@@ -4,6 +4,7 @@ import uuid
 from typing import Any
 
 from django.conf import settings
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
 from tenancy.context import TenantMismatch, require_current_tenant_id
@@ -67,6 +68,33 @@ class Membership(models.Model):
             A label such as ann @ Acme (viewer).
         """
         return f"{self.user} @ {self.tenant} ({self.role})"
+
+
+class ApiToken(models.Model):
+    """A revocable credential that lets a program act inside one tenant.
+
+    Tokens are looked up by hash before any tenant is active, so like Membership this table is
+    deliberately not a TenantModel and has no Row-Level Security. Only the sha256 hex of the
+    token is stored, never the token itself. Callers always filter by tenant or by token hash.
+    """
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="api_tokens")
+    name = models.CharField(max_length=200)
+    token_hash = models.CharField(max_length=64, unique=True)
+    scopes = ArrayField(models.CharField(max_length=50))
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self) -> str:
+        """Return the token name.
+
+        Returns:
+            The display name of the token.
+        """
+        return self.name
 
 
 class TenantManager(models.Manager[Any]):
