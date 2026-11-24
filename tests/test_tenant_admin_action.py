@@ -110,3 +110,18 @@ def test_invalid_or_unknown_tenant_is_a_404(client: Client, method: str, bad_id:
     superuser(client)
     assert getattr(client, method)(activate_url(bad_id)).status_code == 404
     assert "tenant_id" not in client.session
+
+
+def test_activated_tenant_is_dropped_on_the_next_request_without_a_membership(
+    client: Client,
+) -> None:
+    """Activating a tenant is not enough: the next request needs a membership in it.
+
+    Args:
+        client: Django test client fixture.
+    """
+    tenant = Tenant.objects.create(name="A")
+    superuser(client)
+    client.post(activate_url(tenant.pk))
+    assert client.get("/admin/billing/customer/").status_code == 403
+    assert "tenant_id" not in client.session
