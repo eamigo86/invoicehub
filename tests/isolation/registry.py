@@ -5,11 +5,12 @@ gets its isolation cases: the parametrized suite runs against whatever this regi
 """
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from django.apps import apps
 from django.apps.registry import Apps
 from django.db import models
+from django.urls import URLPattern, URLResolver
 
 from billing.models import Customer
 from tenancy.models import Membership, Tenant, TenantModel
@@ -107,3 +108,37 @@ def unprotected_tenant_fk_models(
         )
     ]
     return sorted(offenders)
+
+
+def project_url_names(
+    patterns: Sequence[URLPattern | URLResolver],
+    skip_namespaces: tuple[str, ...] = ("admin",),
+    skip_modules: tuple[str, ...] = ("allauth",),
+) -> list[str]:
+    """List the named URLs of a URLconf that belong to the project's own views.
+
+    Args:
+        patterns: URL patterns to walk, such as the urlpatterns of the root URLconf.
+        skip_namespaces: Included namespaces to leave out, the admin site by default.
+        skip_modules: Top-level packages whose views are left out, allauth by default.
+
+    Returns:
+        The reversible names, prefixed with their namespaces, in declaration order.
+    """
+    names: list[str] = []
+    for pattern in patterns:
+        if isinstance(pattern, URLResolver):
+            if pattern.namespace in skip_namespaces:
+                continue
+            prefix = f"{pattern.namespace}:" if pattern.namespace else ""
+            inner = project_url_names(pattern.url_patterns, skip_namespaces, skip_modules)
+            names.extend(f"{prefix}{name}" for name in inner)
+        elif pattern.name and pattern.callback.__module__.split(".")[0] not in skip_modules:
+            names.append(pattern.name)
+    return names
+
+
+URL_ISOLATION_CASES: frozenset[str] = frozenset({"tenancy:list", "tenancy:select"})
+"""Names of the project URLs that have isolation cases; add every new project URL name here.
+
+The cases for the tenancy URLs are in test_tenant_selection."""
