@@ -3,7 +3,9 @@
 This is the backstop behind the services: the admin, bulk updates and raw SQL cannot get around
 it. The functions run with the privileges of the caller, so Row-Level Security applies to their
 lookups and a parent invoice that cannot be seen counts as not being a draft: the checks fail
-closed. Every refusal raises SQLSTATE 23000, which Django surfaces as IntegrityError.
+closed. The draft checks lock the parent invoice row FOR SHARE, so a line written while another
+transaction issues that invoice waits for it and then sees the new status instead of slipping in.
+Every refusal raises SQLSTATE 23000, which Django surfaces as IntegrityError.
 
 An invoice that is not a draft accepts an UPDATE only when the rows before and after, compared
 as jsonb, differ solely in the keys of the allow-list below (status and updated_at), and the
@@ -16,18 +18,23 @@ from django.db import migrations
 
 FORWARD = """
 CREATE FUNCTION billing_invoice_is_draft(invoice uuid) RETURNS boolean
-LANGUAGE sql STABLE AS $$
-    SELECT EXISTS (SELECT 1 FROM billing_invoice WHERE id = invoice AND status = 'draft')
+LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM 1 FROM billing_invoice WHERE id = invoice AND status = 'draft' FOR SHARE;
+    RETURN FOUND;
+END
 $$;
 
 CREATE FUNCTION billing_line_invoice_is_draft(line bigint) RETURNS boolean
-LANGUAGE sql STABLE AS $$
-    SELECT EXISTS (
-        SELECT 1
-        FROM billing_invoiceline AS l
-        JOIN billing_invoice AS i ON i.id = l.invoice_id
-        WHERE l.id = line AND i.status = 'draft'
-    )
+LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM 1
+    FROM billing_invoiceline AS l
+    JOIN billing_invoice AS i ON i.id = l.invoice_id
+    WHERE l.id = line AND i.status = 'draft'
+    FOR SHARE OF i;
+    RETURN FOUND;
+END
 $$;
 
 CREATE FUNCTION billing_invoice_guard_update() RETURNS trigger

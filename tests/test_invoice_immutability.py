@@ -1,12 +1,14 @@
 """Issued invoices are frozen in the database, whatever path writes to them."""
 
+import threading
+import time
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
 import pytest
-from django.db import IntegrityError, connection
+from django.db import IntegrityError, connection, connections
 from django.db.models import ProtectedError
 from django.test import Client
 from django.utils import timezone
@@ -131,6 +133,9 @@ def test_issued_invoice_columns_cannot_change(world: World) -> None:
         world, raw("UPDATE billing_invoice SET status = 'draft', notes = 'x' WHERE id = %s", pk)
     )
     refused(world, raw("UPDATE billing_invoice SET status = 'draft' WHERE id = %s", pk))
+    refused(world, raw("UPDATE billing_invoice SET id = gen_random_uuid() WHERE id = %s", pk))
+    other = Tenant.objects.create(name="B")
+    refused(world, raw("UPDATE billing_invoice SET tenant_id = %s WHERE id = %s", other.pk, pk))
     with tenant_context(world.tenant.pk):
         stored = Invoice.objects.get(pk=pk)
     assert (stored.notes, stored.total) == ("", world.issued.total)
@@ -210,6 +215,58 @@ def test_a_line_cannot_move_into_or_out_of_an_issued_invoice(world: World) -> No
     )
     refused(world, into)
     refused(world, out_of)
+
+
+def test_a_line_tax_cannot_move_into_or_out_of_an_issued_invoice(world: World) -> None:
+    """Re-parenting a line tax is refused when either line belongs to an issued invoice.
+
+    Args:
+        world: Committed tenant with issued and draft invoices.
+    """
+    with tenant_context(world.tenant.pk):
+        draft_tax = InvoiceLineTax.objects.get(line=world.draft_line)
+    move = "UPDATE billing_invoicelinetax SET line_id = %s WHERE id = %s"
+    refused(world, raw(move, world.issued_line.pk, draft_tax.pk))
+    refused(world, raw(move, world.draft_line.pk, world.issued_tax.pk))
+
+
+def test_a_line_waits_for_a_concurrent_issue_and_is_then_refused() -> None:
+    """A line written while another transaction issues the invoice waits for it, then fails.
+
+    The guard locks the parent invoice row, so the insert cannot read the draft status that the
+    issuing transaction is about to replace. The rows are committed first so the second
+    connection can see them.
+    """
+    tenant = Tenant.objects.create(name="Race")
+    with tenant_context(tenant.pk):
+        draft = Invoice.objects.create(
+            customer=Customer.objects.create(name="Bolt"), currency="USD"
+        )
+    errors: list[BaseException] = []
+
+    def add_line() -> None:
+        """Insert a line into the draft from a second connection and record the outcome."""
+        try:
+            with tenant_context(tenant.pk):
+                InvoiceLine.objects.create(
+                    invoice=draft, position=1, description="Late", quantity=1, unit_price=1
+                )
+        except BaseException as error:  # noqa: BLE001 - the outcome is asserted below
+            errors.append(error)
+        finally:
+            connections.close_all()
+
+    with tenant_context(tenant.pk):
+        Invoice.objects.filter(pk=draft.pk).update(status=Invoice.Status.ISSUED)
+        writer = threading.Thread(target=add_line)
+        writer.start()
+        time.sleep(0.5)
+    writer.join(timeout=10)
+    assert not writer.is_alive()
+    assert len(errors) == 1
+    assert "issued invoices are immutable" in str(errors[0])
+    with tenant_context(tenant.pk):
+        assert not InvoiceLine.objects.filter(invoice=draft).exists()
 
 
 def test_the_status_of_an_issued_invoice_can_change(world: World) -> None:
