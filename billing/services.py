@@ -374,6 +374,10 @@ def save_draft(principal: Principal | None, invoice: Invoice, lines: list[DraftL
         totals.tax_total,
         totals.total,
     )
+    invoice.series = None
+    invoice.number = invoice.year = invoice.issuer = invoice.customer_details = None
+    invoice.issued_at = None
+    invoice.reference = ""
     _clean(invoice)
     invoice.save()
     invoice.lines.all().delete()
@@ -431,38 +435,35 @@ REQUIRED_ISSUER_FIELDS = ["legal_name", "address_line1", "city", "state", "posta
 """Tenant columns that must be filled in before an invoice can be issued."""
 
 
-def _next_reference(kind: str, issue_year: int) -> tuple[InvoiceSeries, int, str]:
-    """Take the next number of the current tenant's series for a kind.
+def _lock_series(kind: str, local_year: int) -> InvoiceSeries:
+    """Create the current tenant's series for a kind if needed, and lock it.
 
-    The series is created on first use and locked, so concurrent issues queue up behind each
-    other. The counter restarts at 1 when the issue year is later than the series year. Taking
-    the number and incrementing the counter happen in the caller's transaction, so a rollback
-    gives the number back and no number is skipped or reused.
+    The lock is held until the surrounding transaction ends, so concurrent issues queue up behind
+    each other. The year given only sets the year of a series created now.
 
     Args:
         kind: Kind of document being numbered.
-        issue_year: Year of the issue date.
+        local_year: Year of the tenant-local date at the moment of the call, used for a new series.
 
     Returns:
-        The locked series, the number taken and the display reference built from them.
+        The locked series.
     """
     created, _ = InvoiceSeries.objects.get_or_create(
-        kind=kind, defaults={"prefix": DEFAULT_PREFIXES[Invoice.Kind(kind)], "year": issue_year}
+        kind=kind, defaults={"prefix": DEFAULT_PREFIXES[Invoice.Kind(kind)], "year": local_year}
     )
-    series = InvoiceSeries.objects.select_for_update().get(pk=created.pk)
-    if issue_year > series.year:
-        series.year, series.next_number = issue_year, 1
-    number = series.next_number
-    series.next_number = number + 1
-    series.save(update_fields=["year", "next_number"])
-    return series, number, f"{series.prefix}{series.year}-{number:05d}"
+    locked: InvoiceSeries = InvoiceSeries.objects.select_for_update().get(pk=created.pk)
+    return locked
 
 
 @transaction.atomic
 def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
     """Issue a draft: number it, freeze the issuer and customer details and set its dates.
 
-    The issue date is today in the timezone of the tenant, and the due date is kept when it is
+    The series is locked first and the clock is read afterwards, so a request that waited for
+    the lock never numbers with a date older than the series. InvalidTransition is also raised
+    when the issue year is earlier than the year of the series, which only a clock behind
+    another server can cause; nothing changes then. The issue date is today in the timezone of
+    the tenant, and the due date is kept when it is
     not before the issue date, otherwise it is PAYMENT_TERM_DAYS days later. The invoice
     receives the next number of its series and a reference such as INV-2026-00001, which is
     stored so that a later prefix change never alters it. InvalidTransition is raised when the
@@ -478,6 +479,7 @@ def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
 
     Raises:
         Invoice.DoesNotExist: When the invoice is not stored for the current tenant.
+        InvalidTransition: When the invoice is not a draft or the clock is behind the series.
         ValidationError: When the invoice has no lines or the issuer details are incomplete.
     """
     require_permission(principal, Permission.INVOICES_WRITE)
@@ -491,9 +493,19 @@ def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
     if missing:
         raise ValidationError(f"The issuer details are incomplete: {', '.join(missing)}.")
     before = _snapshot(stored)
+    series = _lock_series(stored.kind, _local_date(tenant, timezone.now()).year)
     now = timezone.now()
     today = _local_date(tenant, now)
-    series, number, reference = _next_reference(stored.kind, today.year)
+    if today.year < series.year:
+        raise InvalidTransition(
+            f"the clock is in {today.year} but the series is already in {series.year}"
+        )
+    if today.year > series.year:
+        series.year, series.next_number = today.year, 1
+    number = series.next_number
+    series.next_number = number + 1
+    series.save(update_fields=["year", "next_number"])
+    reference = f"{series.prefix}{series.year}-{number:05d}"
     customer = stored.customer
     stored.series, stored.number, stored.year, stored.reference = (
         series,
@@ -572,3 +584,17 @@ def save_series(principal: Principal | None, series: InvoiceSeries) -> InvoiceSe
         _clean(series)
         series.save(update_fields=["prefix"])
     return series
+
+
+def delete_series(principal: Principal | None, series: InvoiceSeries) -> None:
+    """Delete an invoice series.
+
+    A series that numbered an invoice cannot be deleted, because the invoices protect it, and
+    Django raises ProtectedError.
+
+    Args:
+        principal: Acting principal, who needs settings:manage or PermissionDenied is raised.
+        series: Series to remove.
+    """
+    require_permission(principal, Permission.SETTINGS_MANAGE)
+    series.delete()

@@ -1,6 +1,7 @@
 """Draft invoices: stored totals, tax snapshots, line replacement, audit and permissions."""
 
 from collections.abc import Generator
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -226,6 +227,31 @@ def test_a_caller_cannot_save_a_new_invoice_as_issued(
     """
     saved = save_draft(writer, Invoice(customer=customer, status=Invoice.Status.ISSUED), [])
     assert Invoice.objects.get(pk=saved.pk).status == Invoice.Status.DRAFT
+
+
+def test_a_caller_cannot_store_issue_only_fields(writer: Principal, customer: Customer) -> None:
+    """A number, reference, year or snapshot carried by the instance is not stored.
+
+    Args:
+        writer: Principal allowed to write invoices.
+        customer: Customer to invoice.
+    """
+    saved = save_draft(
+        writer,
+        Invoice(
+            customer=customer,
+            number=7,
+            year=2026,
+            reference="INV-2026-00007",
+            issuer={"legal_name": "Fake"},
+            customer_details={"name": "Fake"},
+            issued_at=datetime(2026, 1, 1, tzinfo=UTC),
+        ),
+        [],
+    )
+    stored = Invoice.objects.get(pk=saved.pk)
+    assert (stored.series, stored.number, stored.year, stored.reference) == (None, None, None, "")
+    assert (stored.issuer, stored.customer_details, stored.issued_at) == (None, None, None)
 
 
 @pytest.mark.parametrize(

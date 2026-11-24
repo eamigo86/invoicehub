@@ -17,6 +17,7 @@ from .services import (
     InvalidTransition,
     delete_customer,
     delete_product,
+    delete_series,
     delete_tax_rate,
     issue_invoice,
     save_customer,
@@ -274,6 +275,25 @@ class InvoiceSeriesAdmin(TenantModelAdmin):
         """
         save_series(request_principal(request), obj)
 
+    def delete_model(self, request: HttpRequest, obj: InvoiceSeries) -> None:
+        """Delete a series through the service.
+
+        Args:
+            request: Current request.
+            obj: Series being deleted.
+        """
+        delete_series(request_principal(request), obj)
+
+    def delete_queryset(self, request: HttpRequest, queryset: QuerySet[InvoiceSeries]) -> None:
+        """Delete selected series one by one through the service.
+
+        Args:
+            request: Current request.
+            queryset: Series selected for deletion.
+        """
+        for series in queryset:
+            delete_series(request_principal(request), series)
+
 
 @admin.register(AuditEvent)
 class AuditEventAdmin(TenantModelAdmin):
@@ -406,14 +426,21 @@ class InvoiceAdmin(TenantModelAdmin):
     def issue_selected_drafts(self, request: HttpRequest, queryset: QuerySet[Invoice]) -> None:
         """Issue each selected draft through the service and report every outcome.
 
+        Drafts are taken ordered by kind and pk.
+
         Args:
             request: Current request.
             queryset: Invoices selected in the changelist.
         """
         principal = request_principal(request)
-        for invoice in queryset:
+        # Always take locks in the same order, so concurrent actions cannot deadlock.
+        for invoice in queryset.order_by("kind", "pk"):
             try:
                 issued = issue_invoice(principal, invoice)
+            except Invoice.DoesNotExist:
+                self.message_user(
+                    request, f"{invoice.pk}: the invoice no longer exists.", messages.ERROR
+                )
             except ValidationError as error:
                 self.message_user(
                     request, f"{invoice.pk}: {' '.join(error.messages)}", messages.ERROR

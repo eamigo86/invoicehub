@@ -2,14 +2,17 @@
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.db.models import ProtectedError
 from django.test import Client
 
+import billing.admin
 from accounts.models import User
 from billing.models import Customer, Invoice, InvoiceSeries
-from billing.services import DraftLine, save_draft, save_series
+from billing.services import DraftLine, delete_series, issue_invoice, save_draft, save_series
 from tenancy.context import tenant_context
 from tenancy.models import Membership, Tenant
 from tenancy.permissions import Permission, Principal
@@ -233,3 +236,182 @@ def test_a_viewer_has_no_issue_action(tenant: Tenant, client: Client) -> None:
     )
     with tenant_context(tenant.pk):
         assert Invoice.objects.get(pk=good.pk).status == "draft"
+
+
+@pytest.mark.django_db
+def test_delete_series_removes_an_unused_series_and_needs_settings_manage(tenant: Tenant) -> None:
+    """A settings:manage holder deletes a series nobody used; an accountant is refused.
+
+    Args:
+        tenant: Tenant that owns the series.
+    """
+    manager = Principal(tenant.pk, frozenset({Permission.SETTINGS_MANAGE}))
+    accountant = Principal(tenant.pk, frozenset({Permission.INVOICES_WRITE}))
+    with tenant_context(tenant.pk):
+        series = save_series(manager, InvoiceSeries(kind=Invoice.Kind.INVOICE, prefix="INV-"))
+        with pytest.raises(PermissionDenied):
+            delete_series(accountant, series)
+        assert InvoiceSeries.objects.exists()
+        delete_series(manager, series)
+        assert not InvoiceSeries.objects.exists()
+
+
+@pytest.mark.django_db
+def test_a_series_with_invoices_cannot_be_deleted(tenant: Tenant) -> None:
+    """The protected foreign key refuses to delete a series that numbered an invoice.
+
+    Args:
+        tenant: Tenant that owns the series.
+    """
+    principal = Principal(tenant.pk, frozenset(Permission))
+    with tenant_context(tenant.pk):
+        customer = Customer.objects.create(name="Bolt")
+        pending = save_draft(principal, Invoice(customer=customer), [DraftLine("A", Decimal(1), 5)])
+        issue_invoice(principal, pending)
+        with pytest.raises(ProtectedError):
+            delete_series(principal, InvoiceSeries.objects.get())
+        assert InvoiceSeries.objects.count() == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_series_admin_deletes_through_the_service(
+    tenant: Tenant, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The delete page and the bulk action both call delete_series.
+
+    Args:
+        tenant: Tenant that owns the series.
+        client: Test client.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    login(client, tenant, Membership.Role.ADMIN)
+    principal = Principal(tenant.pk, frozenset(Permission))
+    with tenant_context(tenant.pk):
+        first = save_series(principal, InvoiceSeries(kind=Invoice.Kind.INVOICE, prefix="INV-"))
+        second = save_series(principal, InvoiceSeries(kind=Invoice.Kind.CREDIT_NOTE, prefix="CN-"))
+    deleted: list[str] = []
+    original = delete_series
+
+    def record(who: Principal | None, row: InvoiceSeries) -> None:
+        """Record the call, then delete through the real service.
+
+        Args:
+            who: Acting principal.
+            row: Series being deleted.
+        """
+        deleted.append(row.prefix)
+        original(who, row)
+
+    monkeypatch.setattr(billing.admin, "delete_series", record)
+    url = "/admin/billing/invoiceseries/"
+    assert client.post(f"{url}{first.pk}/delete/", {"post": "yes"}).status_code == 302
+    data: dict[str, Any] = {
+        "action": "delete_selected",
+        "_selected_action": [str(second.pk)],
+        "post": "yes",
+    }
+    assert client.post(url, data).status_code == 302
+    assert deleted == ["INV-", "CN-"]
+    with tenant_context(tenant.pk):
+        assert not InvoiceSeries.objects.exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_issue_action_takes_documents_in_a_fixed_order(
+    tenant: Tenant, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drafts are issued ordered by kind and then pk, whatever the order they were selected in.
+
+    Args:
+        tenant: Tenant that owns the drafts.
+        client: Test client.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    login(client, tenant, Membership.Role.ACCOUNTANT)
+    principal = Principal(tenant.pk, frozenset({Permission.INVOICES_WRITE}))
+    with tenant_context(tenant.pk):
+        customer = Customer.objects.create(name="Bolt")
+        lines = [DraftLine("A", Decimal(1), 5)]
+        drafts = [
+            save_draft(principal, Invoice(customer=customer, kind=kind), lines)
+            for kind in ("invoice", "credit_note", "invoice", "credit_note")
+        ]
+    seen: list[Any] = []
+    original = issue_invoice
+
+    def record(who: Principal | None, row: Invoice) -> Invoice:
+        """Record the invoice, then issue it through the real service.
+
+        Args:
+            who: Acting principal.
+            row: Draft being issued.
+
+        Returns:
+            The issued invoice.
+        """
+        seen.append(row.pk)
+        return original(who, row)
+
+    monkeypatch.setattr(billing.admin, "issue_invoice", record)
+    client.post(
+        INVOICES_URL,
+        {
+            "action": "issue_selected_drafts",
+            "_selected_action": [str(d.pk) for d in reversed(drafts)],
+        },
+    )
+    notes = sorted(drafts[i].pk for i in (1, 3))
+    invoices = sorted(drafts[i].pk for i in (0, 2))
+    assert seen == notes + invoices
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_issue_action_keeps_going_after_failures(
+    tenant: Tenant, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invalid and vanished drafts are reported, and the others still get consecutive numbers.
+
+    Args:
+        tenant: Tenant that owns the drafts.
+        client: Test client.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    login(client, tenant, Membership.Role.ACCOUNTANT)
+    principal = Principal(tenant.pk, frozenset({Permission.INVOICES_WRITE}))
+    with tenant_context(tenant.pk):
+        customer = Customer.objects.create(name="Bolt")
+        lines = [DraftLine("A", Decimal(1), 5)]
+        one = save_draft(principal, Invoice(customer=customer), lines)
+        empty = save_draft(principal, Invoice(customer=customer), [])
+        vanishing = save_draft(principal, Invoice(customer=customer), lines)
+        two = save_draft(principal, Invoice(customer=customer), lines)
+    original = issue_invoice
+
+    def delete_before(who: Principal | None, row: Invoice) -> Invoice:
+        """Delete the vanishing draft just before it would be issued, as another request could.
+
+        Args:
+            who: Acting principal.
+            row: Draft being issued.
+
+        Returns:
+            The issued invoice.
+        """
+        if row.pk == vanishing.pk:
+            Invoice.objects.filter(pk=vanishing.pk).delete()
+        return original(who, row)
+
+    monkeypatch.setattr(billing.admin, "issue_invoice", delete_before)
+    selected = [str(d.pk) for d in (one, empty, vanishing, two)]
+    response = client.post(
+        INVOICES_URL,
+        {"action": "issue_selected_drafts", "_selected_action": selected},
+        follow=True,
+    )
+    messages = [str(m) for m in response.context["messages"]]
+    assert sum("Issued INV-" in m for m in messages) == 2
+    assert any("at least one line" in m for m in messages)
+    assert any(str(vanishing.pk) in m for m in messages)
+    with tenant_context(tenant.pk):
+        numbers = Invoice.objects.exclude(number=None).order_by("number")
+        assert [i.number for i in numbers] == [1, 2]
