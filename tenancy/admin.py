@@ -3,12 +3,13 @@
 from typing import Any
 
 from django.contrib import admin
-from django.http import HttpRequest, HttpResponse
-from django.shortcuts import redirect
+from django.http import Http404, HttpRequest, HttpResponse
+from django.shortcuts import get_object_or_404, redirect
+from django.template.response import TemplateResponse
 from unfold.admin import ModelAdmin  # type: ignore[import-untyped]
 from unfold.decorators import action  # type: ignore[import-untyped]
 
-from tenancy.context import get_current_tenant_id
+from tenancy.context import get_current_tenant_id, parse_tenant_id
 
 from .models import Tenant
 
@@ -106,16 +107,32 @@ class TenantAdmin(ModelAdmin):  # type: ignore[misc]
 
     @action(description="Activate", permissions=["activate"])  # type: ignore[untyped-decorator]
     def activate(self, request: HttpRequest, object_id: str) -> HttpResponse:
-        """Make a tenant the active one for the admin session.
+        """Ask for confirmation, then make a tenant the active one for the admin session.
+
+        GET only renders a confirmation page. POST, protected by CSRF and limited to
+        superusers, stores the tenant in the session.
 
         Args:
             request: Current request.
             object_id: Primary key of the tenant to activate.
 
         Returns:
-            A redirect back to the tenant changelist.
+            The confirmation page, or a redirect to the tenant changelist after activation.
+
+        Raises:
+            Http404: When the id is not a valid UUID or names no tenant.
         """
-        # Provisional until the RFC 0002 authentication slice provides real tenant selection
-        # with membership checks.
-        request.session["tenant_id"] = str(object_id)
-        return redirect("admin:tenancy_tenant_changelist")
+        try:
+            tenant = get_object_or_404(Tenant, pk=parse_tenant_id(object_id))
+        except ValueError as exc:
+            raise Http404("invalid tenant id") from exc
+        if request.method == "POST":
+            # Provisional until the RFC 0002 authentication slice provides real tenant selection
+            # with membership checks.
+            request.session["tenant_id"] = str(tenant.pk)
+            return redirect("admin:tenancy_tenant_changelist")
+        return TemplateResponse(
+            request,
+            "tenancy/activate_tenant.html",
+            {**self.admin_site.each_context(request), "title": "Activate tenant", "tenant": tenant},
+        )
