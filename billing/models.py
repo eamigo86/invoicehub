@@ -8,6 +8,7 @@ from django.contrib.postgres.functions import RandomUUID
 from django.core.serializers.json import DjangoJSONEncoder
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.db.models import Sum
 
 from core.models import Currency, PostalAddress
 from tenancy.models import TenantModel
@@ -255,6 +256,25 @@ class Invoice(TenantModel):
             ),
         ]
 
+    def credited_total(self) -> int:
+        """Add up the totals of the issued credit notes of this invoice.
+
+        Returns:
+            The credited amount in cents.
+        """
+        issued = self.credit_notes.exclude(status=Invoice.Status.DRAFT)
+        total: int = issued.aggregate(total=Sum("total"))["total"] or 0
+        return total
+
+    def balance_due(self) -> int:
+        """Compute what is still owed: the total minus issued credit notes minus payments.
+
+        Returns:
+            The balance in cents, which is zero or less once nothing is owed.
+        """
+        allocated: int = self.allocations.aggregate(total=Sum("amount"))["total"] or 0
+        return self.total - self.credited_total() - allocated
+
     def __str__(self) -> str:
         """Describe the invoice by customer and status.
 
@@ -374,3 +394,71 @@ class InvoiceLineTax(TenantModel):
             A label such as Austin 825 bp.
         """
         return f"{self.name} {self.rate_bp} bp"
+
+
+class Payment(TenantModel):
+    """Money received from a customer, kept apart from the invoices it settles.
+
+    A payment is applied to invoices through its allocations; any part not allocated stays open
+    for reconciliation. Payments are recorded by the services and never edited.
+
+    Attributes:
+        amount: Amount received, in cents.
+        currency: Currency of the amount.
+        value_date: Day the money counts as received, as a date in the tenant timezone.
+        source: Whether it was entered by hand or came from a bank transaction.
+        reference: Free text such as a transfer reference or check number.
+        created_at: When the payment was recorded.
+    """
+
+    class Source(models.TextChoices):
+        """Where a payment came from."""
+
+        MANUAL = "manual"
+        BANK = "bank"
+
+    amount = models.BigIntegerField(validators=[MinValueValidator(1)])
+    currency = models.CharField(max_length=3, choices=Currency)
+    value_date = models.DateField()
+    source = models.CharField(max_length=10, choices=Source, default=Source.MANUAL)
+    reference = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        """Describe the payment by amount and date.
+
+        Returns:
+            A label such as 1000 USD on 2026-06-15.
+        """
+        return f"{self.amount} {self.currency} on {self.value_date}"
+
+
+class PaymentAllocation(TenantModel):
+    """The part of a payment that settles one invoice.
+
+    Attributes:
+        payment: Payment the money comes from.
+        invoice: Invoice it is applied to, protected against deletion.
+        amount: Applied amount, in cents.
+    """
+
+    payment = models.ForeignKey(Payment, on_delete=models.CASCADE, related_name="allocations")
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="allocations")
+    amount = models.BigIntegerField(validators=[MinValueValidator(1)])
+
+    class Meta:
+        """Model options."""
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "payment", "invoice"], name="paymentallocation_tenant_pair_uniq"
+            )
+        ]
+
+    def __str__(self) -> str:
+        """Describe the allocation by amount and invoice.
+
+        Returns:
+            A label such as 600 on invoice 1c2d.
+        """
+        return f"{self.amount} on invoice {self.invoice_id}"

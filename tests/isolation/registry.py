@@ -4,6 +4,7 @@ Adding a tenant model without a factory here fails the meta-test, which is how e
 gets its isolation cases: the parametrized suite runs against whatever this registry holds.
 """
 
+import datetime
 import importlib
 import importlib.util
 import inspect
@@ -25,6 +26,8 @@ from billing.models import (
     InvoiceLine,
     InvoiceLineTax,
     InvoiceSeries,
+    Payment,
+    PaymentAllocation,
     Product,
     ProductTaxRate,
     TaxRate,
@@ -142,6 +145,33 @@ def make_invoice_series() -> TenantModel:
     return series
 
 
+def make_payment() -> TenantModel:
+    """Create one manual payment for the active tenant.
+
+    Returns:
+        The saved payment.
+    """
+    payment: TenantModel = Payment.objects.create(
+        amount=100,
+        currency=Currency.USD,
+        value_date=datetime.date(2026, 6, 15),
+        reference=f"ref-{uuid.uuid4().hex[:8]}",
+    )
+    return payment
+
+
+def make_payment_allocation() -> TenantModel:
+    """Create one allocation of a new payment to a new invoice for the active tenant.
+
+    Returns:
+        The saved allocation.
+    """
+    allocation: TenantModel = PaymentAllocation.objects.create(
+        payment=make_payment(), invoice=make_invoice(), amount=50
+    )
+    return allocation
+
+
 FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {
     Customer: make_customer,
     TaxRate: make_tax_rate,
@@ -152,6 +182,8 @@ FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {
     InvoiceLine: make_invoice_line,
     InvoiceLineTax: make_invoice_line_tax,
     InvoiceSeries: make_invoice_series,
+    Payment: make_payment,
+    PaymentAllocation: make_payment_allocation,
 }
 
 ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {
@@ -161,6 +193,7 @@ ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {
     AuditEvent: "action",
     Invoice: "customer",
     InvoiceSeries: "prefix",
+    Payment: "reference",
 }
 """Plain text field of each model's admin form that the isolation tests overwrite with a marker.
 
@@ -194,6 +227,8 @@ def clone_values(model: type[TenantModel]) -> dict[str, Any]:
         return {"position": 2}
     if model is InvoiceSeries:
         return {"kind": Invoice.Kind.CREDIT_NOTE, "prefix": f"CN-{uuid.uuid4().hex[:8]}"}
+    if model is PaymentAllocation:
+        return {"invoice_id": make_invoice().pk}
     if model is Invoice:
         return {"notes": f"clone-{uuid.uuid4().hex}"}
     return {ADMIN_MARKER_FIELDS.get(model, "name"): f"clone-{uuid.uuid4().hex}"}
@@ -377,6 +412,7 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.services.draft_credit_note",
         "billing.services.save_series",
         "billing.services.delete_series",
+        "billing.services.record_payment",
     }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.
