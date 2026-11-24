@@ -46,7 +46,7 @@ def test_a_token_principal_holds_exactly_its_scopes_in_its_tenant() -> None:
     principal, tenant = admin_of()
     token, _ = issue_token(principal, "ci", [READ])
     assert Principal.from_token(token) == Principal(
-        tenant.pk, frozenset({Permission.INVOICES_READ})
+        tenant.pk, frozenset({Permission.INVOICES_READ}), token_id=token.pk
     )
 
 

@@ -8,7 +8,7 @@ from django.core.exceptions import PermissionDenied
 from accounts.models import User
 from tenancy import permissions
 from tenancy.context import tenant_context
-from tenancy.models import Membership, Tenant
+from tenancy.models import ApiToken, Membership, Tenant
 
 
 def test_permission_values_are_the_documented_scopes() -> None:
@@ -57,6 +57,33 @@ def test_a_principal_from_a_membership_carries_tenant_and_role_permissions() -> 
     principal = permissions.Principal.from_membership(membership)
     assert principal.tenant_id == tenant.pk
     assert principal.permissions == {permissions.Permission.INVOICES_READ}
+
+
+@pytest.mark.django_db
+def test_a_membership_principal_identifies_the_user_and_no_token() -> None:
+    """The principal of a member carries the user id and no token id."""
+    user = User.objects.create_user("ann", "ann@example.com", "pw")
+    tenant = Tenant.objects.create(name="Acme")
+    membership = Membership.objects.create(user=user, tenant=tenant, role=Membership.Role.VIEWER)
+    principal = permissions.Principal.from_membership(membership)
+    assert (principal.user_id, principal.token_id) == (user.pk, None)
+
+
+@pytest.mark.django_db
+def test_a_token_principal_identifies_the_token_and_no_user() -> None:
+    """The principal of an API token carries the token id and no user id."""
+    tenant = Tenant.objects.create(name="Acme")
+    token = ApiToken.objects.create(
+        tenant=tenant, name="ci", token_hash="h" * 64, scopes=["invoices:read"]
+    )
+    principal = permissions.Principal.from_token(token)
+    assert (principal.user_id, principal.token_id) == (None, token.pk)
+
+
+def test_a_principal_has_no_identity_unless_given_one() -> None:
+    """Existing two argument constructions leave both identities empty."""
+    principal = permissions.Principal(uuid.uuid4(), frozenset())
+    assert (principal.user_id, principal.token_id) == (None, None)
 
 
 def test_a_principal_is_immutable() -> None:

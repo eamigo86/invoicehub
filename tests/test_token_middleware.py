@@ -101,7 +101,10 @@ def test_a_valid_token_sets_its_tenant_and_scope_principal(scheme: str) -> None:
     response, seen = run(f"{scheme} {plaintext}")
     assert response.status_code == 200
     assert seen.tenant_id == tenant.pk
-    assert seen.principal == Principal(tenant.pk, frozenset({Permission.INVOICES_READ}))
+    token_id = tenant.api_tokens.get().pk
+    assert seen.principal == Principal(
+        tenant.pk, frozenset({Permission.INVOICES_READ}), token_id=token_id
+    )
     assert get_current_tenant_id() is None
 
 
@@ -187,4 +190,6 @@ def test_other_authorization_schemes_follow_the_session_path() -> None:
     _, seen = run(f"Basic {plaintext}", {"tenant_id": str(tenant.pk)}, ann)
     assert seen.tenant_id == tenant.pk
     assert seen.user == ann
-    assert seen.principal == Principal(tenant.pk, frozenset({Permission.INVOICES_READ}))
+    assert seen.principal == Principal(
+        tenant.pk, frozenset({Permission.INVOICES_READ}), user_id=ann.pk
+    )
