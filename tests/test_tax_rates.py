@@ -6,6 +6,7 @@ import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.test import Client
 
+import billing.admin
 from accounts.models import User
 from billing.models import TaxRate
 from billing.services import delete_tax_rate, save_tax_rate
@@ -172,3 +173,35 @@ class TestTaxRateAdmin:
         client.post(f"/admin/billing/taxrate/{pk}/delete/", {"post": "yes"})
         with tenant_context(tenant.pk):
             assert TaxRate.objects.count() == 0
+
+    def test_bulk_delete_goes_through_the_service(
+        self, client: Client, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The delete-selected action calls delete_tax_rate for every row.
+
+        Args:
+            client: Django test client fixture.
+            monkeypatch: Fixture used to record the service calls.
+        """
+        deleted: list[str] = []
+        original = delete_tax_rate
+
+        def record(principal: Principal | None, row: TaxRate) -> None:
+            """Record the call, then delete through the real service.
+
+            Args:
+                principal: Acting principal.
+                row: Row being deleted.
+            """
+            deleted.append(row.name)
+            original(principal, row)
+
+        monkeypatch.setattr(billing.admin, "delete_tax_rate", record)
+        tenant = self.login(client, Membership.Role.OWNER)
+        with tenant_context(tenant.pk):
+            pks = [str(TaxRate.objects.create(name=name, rate_bp=100).pk) for name in ("a", "b")]
+        data = {"action": "delete_selected", "_selected_action": pks, "post": "yes"}
+        client.post("/admin/billing/taxrate/", data)
+        assert sorted(deleted) == ["a", "b"]
+        with tenant_context(tenant.pk):
+            assert not TaxRate.objects.exists()
