@@ -69,11 +69,13 @@ Default host ports (override with environment variables or a `.env` file):
 Containers connect to PostgreSQL as the unprivileged `invoicehub_app` role; only the migrate step
 uses `invoicehub_migrator`.
 
-### Choosing a tenant in the admin
+### Signing in and choosing a company
 
-Tenant models are hidden in the admin until a tenant is active. Superusers pick one with the
-**Activate** row action on the Tenant admin, which stores it in the session. This is provisional:
-real tenant selection with membership checks arrives with authentication (RFC 0002).
+Sign in at http://localhost:8010/accounts/login/; the admin login goes through the same page. Email
+verification is mandatory, and in development the verification emails land in Mailpit
+(http://localhost:8025). A user with a single company gets it selected on login; otherwise
+`/tenants/` lists the user's companies, switches between them and creates a new one. Tenant models
+stay hidden in the admin until a company is active.
 
 ### Checks and tests on the host
 
@@ -93,10 +95,11 @@ Host-side commands (pytest, migrate, runserver) connect as the migrator, which o
 
 ## Status
 
-Early development. The project scaffold, Docker stack, database roles, tooling and CI are in
-place; the tenancy foundation is in progress: the tenant registry, request-scoped tenant context,
-tenant-scoped base model and Row-Level Security are done, with `Customer` as the first protected
-model; the parametrized isolation suite and admin tenant selection are in place.
+Early development. In place: the project scaffold, Docker stack, database roles, tooling and CI;
+the tenancy foundation (request-scoped tenant context, Row-Level Security, the parametrized
+isolation suite); and authentication and roles (django-allauth email login with mandatory
+verification, memberships with owner, admin, accountant and viewer roles, company selection, and
+hashed, revocable per-tenant API tokens with scopes). Next: billing (RFC 0003).
 
 ## License
 
