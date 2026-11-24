@@ -1,0 +1,15 @@
+{% extends "allauth/layouts/base.html" %}
+{% load i18n unfold %}
+{# Pages for a signed-in user: the account links sit above the content. #}
+{% block menu %}
+    {% if user.is_authenticated %}
+        <nav class="flex flex-wrap gap-2 mb-6" data-allauth-menu="unfold">
+            {% url 'account_email' as email_url %}
+            {% component "unfold/components/button.html" with href=email_url variant="default" size="sm" icon="mail" %}{% trans "Email" %}{% endcomponent %}
+            {% url 'account_change_password' as password_url %}
+            {% component "unfold/components/button.html" with href=password_url variant="default" size="sm" icon="key" %}{% trans "Password" %}{% endcomponent %}
+            {% url 'account_logout' as logout_url %}
+            {% component "unfold/components/button.html" with href=logout_url variant="ghost" size="sm" icon="logout" class="ml-auto" %}{% trans "Sign Out" %}{% endcomponent %}
+        </nav>
+    {% endif %}
+{% endblock menu %}

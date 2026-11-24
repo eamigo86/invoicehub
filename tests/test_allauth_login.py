@@ -184,14 +184,15 @@ def test_login_with_the_username_does_not_authenticate(
     assert "_auth_user_id" not in client.session
 
 
-def test_django_admin_login_still_uses_the_username(client: Client) -> None:
-    """The Django model backend stays active next to allauth.
+def test_django_admin_login_form_is_gone(client: Client) -> None:
+    """The admin username form is replaced: anonymous visitors are sent to allauth.
 
     Args:
         client: Django test client fixture.
     """
-    User.objects.create_superuser("root", "root@example.com", PASSWORD)
-    assert client.login(username="root", password=PASSWORD)
+    response = client.get("/admin/login/")
+    assert response.status_code == 302
+    assert response["Location"].startswith("/accounts/login/")
 
 
 def test_verification_mail_goes_through_the_mailers_setting(settings: Any, client: Client) -> None:
