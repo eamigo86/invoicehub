@@ -60,6 +60,8 @@ jobs:
       - run: uv run mypy .
       - run: uv run python manage.py makemigrations --check
       - run: uv run pytest --cov
+      - name: Tenant isolation suite
+        run: uv run pytest -m isolation
 
   docker:
     runs-on: ubuntu-latest
