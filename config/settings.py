@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.postgres",  # ArrayField of tenancy.ApiToken
     "allauth",
     "allauth.account",
     "core",

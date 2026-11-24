@@ -7,7 +7,7 @@ from enum import StrEnum
 from django.core.exceptions import PermissionDenied
 from django.http import HttpRequest
 
-from tenancy.models import Membership
+from tenancy.models import ApiToken, Membership
 
 
 class Permission(StrEnum):
@@ -27,6 +27,12 @@ ROLE_PERMISSIONS: dict[Membership.Role, frozenset[Permission]] = {
     ),
     Membership.Role.VIEWER: frozenset({Permission.INVOICES_READ}),
 }
+
+
+TOKEN_SCOPES: frozenset[Permission] = frozenset(
+    {Permission.INVOICES_READ, Permission.INVOICES_WRITE, Permission.RECONCILIATION_WRITE}
+)
+"""Permissions an API token may carry; tokens:manage is never a token scope."""
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,20 @@ class Principal:
             A principal for the membership tenant with the permissions of its role.
         """
         return cls(membership.tenant_id, ROLE_PERMISSIONS[Membership.Role(membership.role)])
+
+    @classmethod
+    def from_token(cls, token: ApiToken) -> "Principal":
+        """Build the principal of an API token from its scopes alone.
+
+        The creator's role is deliberately ignored, so a token never outgrows its scopes.
+
+        Args:
+            token: Active API token.
+
+        Returns:
+            A principal for the token tenant holding exactly the token scopes.
+        """
+        return cls(token.tenant_id, frozenset(Permission(scope) for scope in token.scopes))
 
 
 def has_permission(principal: Principal | None, permission: Permission) -> bool:

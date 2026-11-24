@@ -13,7 +13,7 @@ from django.db import models
 from django.urls import URLPattern, URLResolver
 
 from billing.models import Customer
-from tenancy.models import Membership, Tenant, TenantModel
+from tenancy.models import ApiToken, Membership, Tenant, TenantModel
 
 
 def make_customer() -> TenantModel:
@@ -77,6 +77,7 @@ PROJECT_APPS = ("core", "tenancy", "accounts", "billing", "reconciliation", "ass
 
 TENANT_FK_ALLOWLIST: dict[type[models.Model], str] = {
     Membership: "looked up before a tenant is active, to decide which tenants a user may enter",
+    ApiToken: "looked up by token hash before any tenant is active, to resolve a request tenant",
 }
 """Plain models that may point at a tenant without being a TenantModel, each with its reason."""
 
