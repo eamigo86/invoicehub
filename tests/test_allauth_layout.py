@@ -4,10 +4,12 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from allauth.account import urls as account_urls
 from allauth.account.models import EmailAddress
+from django.contrib import admin
 from django.contrib.auth.models import AnonymousUser
 from django.core.cache import cache
 from django.core.mail import EmailMessage
@@ -132,6 +134,18 @@ def test_allauth_page_receives_the_unfold_context(client: Client) -> None:
     response = client.get("/accounts/login/")
     assert response.context["site_title"] == "InvoiceHub"
     assert "styles" in response.context
+
+
+def test_site_context_is_built_once_per_request(client: Client) -> None:
+    """Unfold components re-run the processors, so the context is cached on the request.
+
+    Args:
+        client: Django test client fixture.
+    """
+    client.force_login(make_user())
+    with patch.object(admin.site, "each_context", wraps=admin.site.each_context) as spy:
+        client.get("/accounts/email/")
+    assert spy.call_count == 1
 
 
 def test_processor_skips_pages_outside_allauth() -> None:

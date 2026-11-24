@@ -1,0 +1,4 @@
+{% load allauth unfold %}
+{% capture as panel_title silent %}{% slot title %}{% endslot %}{% endcapture %}
+{% capture as panel_footer silent %}{% if slots.actions %}<div class="flex flex-row gap-3">{% for action in slots.actions %}<div>{{ action }}</div>{% endfor %}</div>{% endif %}{% endcapture %}
+{% component "unfold/components/card.html" with title=panel_title footer=panel_footer class="mb-6" %}{% slot body %}{% endslot %}{% endcomponent %}

@@ -1,0 +1,10 @@
+{% load allauth %}
+{# Wrapper classes are those of Unfold's table component, which takes data instead of markup. #}
+<div class="bg-white border border-base-200 flex flex-col mb-6 overflow-hidden rounded-default shadow-xs dark:border-base-800 dark:bg-base-900">
+    <div class="overflow-x-auto scrollbar-default">
+        <table class="border-spacing-none border-separate w-full">
+            {% slot %}
+            {% endslot %}
+        </table>
+    </div>
+</div>

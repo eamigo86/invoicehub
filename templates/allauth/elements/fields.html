@@ -1,0 +1,19 @@
+{% load allauth %}
+{# Labels are always shown: the unlabeled attribute is ignored to keep Unfold's form look. #}
+{% for error in attrs.form.non_field_errors %}
+    {% element alert tags="error" %}
+        {% slot message %}{{ error }}{% endslot %}
+    {% endelement %}
+{% endfor %}
+{% for field in attrs.form %}
+    {% if field.is_hidden %}
+        {{ field }}
+    {% else %}
+        {% element field type=field.field.widget.input_type|default:"textarea" id=field.auto_id name=field.html_name required=field.field.required value=field.value checked=field.value errors=field.errors placeholder=field.field.widget.attrs.placeholder autocomplete=field.field.widget.attrs.autocomplete %}
+            {% slot label %}{{ field.label }}{% endslot %}
+            {% if field.help_text %}
+                {% slot help_text %}{{ field.help_text }}{% endslot %}
+            {% endif %}
+        {% endelement %}
+    {% endif %}
+{% endfor %}
