@@ -6,9 +6,15 @@ from django.db import connection, models
 from django.test.utils import isolate_apps
 
 from tenancy.admin import TenantModelAdmin
-from tenancy.models import TenantModel
+from tenancy.models import Tenant, TenantModel
 from tenancy.operations import POLICY, POLICY_QUAL
-from tests.isolation.registry import FACTORIES, concrete_tenant_models, non_tenant_models
+from tests.isolation.registry import (
+    FACTORIES,
+    TENANT_FK_ALLOWLIST,
+    concrete_tenant_models,
+    non_tenant_models,
+    unprotected_tenant_fk_models,
+)
 
 pytestmark = pytest.mark.isolation
 
@@ -81,3 +87,46 @@ def test_the_business_model_check_flags_plain_and_implicit_through_models() -> N
         assert iso is not None
         assert Tagged is not None
         assert non_tenant_models(iso, ("billing",)) == ["billing.Plain", "billing.Tagged_plains"]
+
+
+def test_every_model_with_a_tenant_foreign_key_is_a_tenant_model_or_allowlisted() -> None:
+    """A plain model pointing at a tenant must justify why it has no Row-Level Security."""
+    assert unprotected_tenant_fk_models() == []
+    assert all(reason for reason in TENANT_FK_ALLOWLIST.values())
+
+
+def test_the_tenant_foreign_key_check_flags_only_unlisted_plain_models() -> None:
+    """A plain model with a tenant key is reported until it is allowlisted."""
+    with isolate_apps("billing") as iso:
+
+        class Plain(models.Model):
+            """Plain model that points at a tenant."""
+
+            tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="+")
+
+            class Meta:
+                """Model options."""
+
+                app_label = "billing"
+
+        class Owned(TenantModel):
+            """Tenant model, safe by construction."""
+
+            class Meta:
+                """Model options."""
+
+                app_label = "billing"
+
+        class Unrelated(models.Model):
+            """Plain model with no tenant key."""
+
+            class Meta:
+                """Model options."""
+
+                app_label = "billing"
+
+        assert iso is not None
+        assert Owned is not None
+        assert Unrelated is not None
+        assert unprotected_tenant_fk_models(iso, ("billing",), {}) == ["billing.Plain"]
+        assert unprotected_tenant_fk_models(iso, ("billing",), {Plain: "test reason"}) == []

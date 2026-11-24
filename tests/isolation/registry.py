@@ -9,9 +9,10 @@ from collections.abc import Callable
 
 from django.apps import apps
 from django.apps.registry import Apps
+from django.db import models
 
 from billing.models import Customer
-from tenancy.models import TenantModel
+from tenancy.models import Membership, Tenant, TenantModel
 
 
 def make_customer() -> TenantModel:
@@ -66,5 +67,43 @@ def non_tenant_models(registry: Apps = apps, labels: tuple[str, ...] = BUSINESS_
         for label in labels
         for model in registry.get_app_config(label).get_models(include_auto_created=True)
         if not issubclass(model, TenantModel) and model._meta.label not in NON_TENANT_ALLOWLIST
+    ]
+    return sorted(offenders)
+
+
+PROJECT_APPS = ("core", "tenancy", "accounts", "billing", "reconciliation", "assistant")
+"""The project's own apps, scanned for models with a foreign key to the tenant."""
+
+TENANT_FK_ALLOWLIST: dict[type[models.Model], str] = {
+    Membership: "looked up before a tenant is active, to decide which tenants a user may enter",
+}
+"""Plain models that may point at a tenant without being a TenantModel, each with its reason."""
+
+
+def unprotected_tenant_fk_models(
+    registry: Apps = apps,
+    labels: tuple[str, ...] = PROJECT_APPS,
+    allowlist: dict[type[models.Model], str] = TENANT_FK_ALLOWLIST,
+) -> list[str]:
+    """List models with a foreign key to Tenant that are neither TenantModel nor allowlisted.
+
+    Args:
+        registry: App registry to inspect.
+        labels: App labels to inspect, which must all be installed in the registry.
+        allowlist: Plain models allowed to reference a tenant, each mapped to its reason.
+
+    Returns:
+        The labels of the offending models, ordered.
+    """
+    offenders = [
+        model._meta.label
+        for label in labels
+        for model in registry.get_app_config(label).get_models(include_auto_created=True)
+        if not issubclass(model, TenantModel)
+        and model not in allowlist
+        and any(
+            isinstance(f, models.ForeignKey) and f.related_model is Tenant
+            for f in model._meta.local_fields
+        )
     ]
     return sorted(offenders)

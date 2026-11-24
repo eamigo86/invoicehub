@@ -3,6 +3,7 @@
 import uuid
 from typing import Any
 
+from django.conf import settings
 from django.db import models
 
 from tenancy.context import TenantMismatch, require_current_tenant_id
@@ -27,6 +28,45 @@ class Tenant(models.Model):
             The display name of the tenant.
         """
         return self.name
+
+
+class Membership(models.Model):
+    """The role a user holds in a tenant.
+
+    Memberships are looked up before any tenant is active, to decide which tenants a user may
+    enter, so like the user table this one is deliberately not a TenantModel and has no
+    Row-Level Security. Callers always filter by user.
+    """
+
+    class Role(models.TextChoices):
+        """Roles a member can hold, each mapped to permissions in tenancy.permissions."""
+
+        OWNER = "owner"
+        ADMIN = "admin"
+        ACCOUNTANT = "accountant"
+        VIEWER = "viewer"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="memberships"
+    )
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="memberships")
+    role = models.CharField(max_length=20, choices=Role)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Model options."""
+
+        constraints = [
+            models.UniqueConstraint(fields=["user", "tenant"], name="membership_user_tenant_uniq")
+        ]
+
+    def __str__(self) -> str:
+        """Describe the membership by user, tenant and role.
+
+        Returns:
+            A label such as ann @ Acme (viewer).
+        """
+        return f"{self.user} @ {self.tenant} ({self.role})"
 
 
 class TenantManager(models.Manager[Any]):
