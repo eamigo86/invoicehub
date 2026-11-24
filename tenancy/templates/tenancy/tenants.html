@@ -1,0 +1,66 @@
+{% extends "allauth/layouts/manage.html" %}
+{% load allauth i18n %}
+{# Company selection page in the allauth manage layout, built from the allauth elements. #}
+{% block head_title %}
+    {% trans "Companies" %}
+{% endblock head_title %}
+{% block content %}
+    {% element h1 %}
+        {% trans "Your companies" %}
+    {% endelement %}
+    {% if memberships %}
+        {% element table %}
+            {% element thead %}
+                {% element tr %}
+                    {% element th %}{% trans "Company" %}{% endelement %}
+                    {% element th %}{% trans "Role" %}{% endelement %}
+                    {% element th %}{% endelement %}
+                {% endelement %}
+            {% endelement %}
+            {% element tbody %}
+                {% for membership in memberships %}
+                    {% element tr %}
+                        {% element td %}
+                            {{ membership.tenant.name }}
+                            {% if membership.tenant_id == active_tenant_id %}
+                                {% element badge tags="success" %}
+                                    {% trans "Active" %}
+                                {% endelement %}
+                            {% endif %}
+                        {% endelement %}
+                        {% element td %}{{ membership.get_role_display }}{% endelement %}
+                        {% element td align="right" %}
+                            <form method="post" action="{% url 'tenancy:select' membership.tenant_id %}">
+                                {% csrf_token %}
+                                {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+                                {% element button type="submit" tags="secondary" %}
+                                    {% trans "Switch" %}
+                                {% endelement %}
+                            </form>
+                        {% endelement %}
+                    {% endelement %}
+                {% endfor %}
+            {% endelement %}
+        {% endelement %}
+    {% else %}
+        {% element p %}
+            {% trans "You do not belong to any company yet. Create one to get started." %}
+        {% endelement %}
+    {% endif %}
+    {% element h2 %}
+        {% trans "Create company" %}
+    {% endelement %}
+    {% element form method="post" %}
+        {% slot body %}
+            {% csrf_token %}
+            {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+            {% element fields form=form %}
+            {% endelement %}
+        {% endslot %}
+        {% slot actions %}
+            {% element button type="submit" %}
+                {% trans "Create company" %}
+            {% endelement %}
+        {% endslot %}
+    {% endelement %}
+{% endblock content %}

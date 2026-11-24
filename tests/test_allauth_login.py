@@ -17,7 +17,7 @@ pytestmark = pytest.mark.django_db
 
 EMAIL = "ann@example.com"
 PASSWORD = "S3cure-passw0rd!"
-INTERIM_TARGET = "/accounts/email/"
+LOGIN_TARGET = "/tenants/"
 
 
 class RecordingBackend(BaseEmailBackend):
@@ -132,7 +132,7 @@ def test_login_is_refused_until_the_address_is_verified(client: Client) -> None:
 def test_confirmation_link_verifies_the_address_and_login_then_succeeds(
     client: Client, mailoutbox: list[EmailMessage]
 ) -> None:
-    """The emailed link verifies the address and login lands on the interim page.
+    """The emailed link verifies the address and login lands on the tenant selection page.
 
     Args:
         client: Django test client fixture.
@@ -144,7 +144,7 @@ def test_confirmation_link_verifies_the_address_and_login_then_succeeds(
     assert addresses() == [(EMAIL, True)]
     response = login(client)
     assert response.status_code == 302
-    assert response.url == INTERIM_TARGET
+    assert response.url == LOGIN_TARGET
     assert client.session["_auth_user_id"] == str(User.objects.get(email=EMAIL).pk)
 
 
