@@ -3,7 +3,9 @@
 import pytest
 from django.contrib import admin
 from django.db import connection, models
+from django.http import HttpRequest, HttpResponse
 from django.test.utils import isolate_apps
+from django.urls import URLPattern, URLResolver, include, path
 
 from tenancy.admin import TenantModelAdmin
 from tenancy.models import Tenant, TenantModel
@@ -11,8 +13,10 @@ from tenancy.operations import POLICY, POLICY_QUAL
 from tests.isolation.registry import (
     FACTORIES,
     TENANT_FK_ALLOWLIST,
+    URL_ISOLATION_CASES,
     concrete_tenant_models,
     non_tenant_models,
+    project_url_names,
     unprotected_tenant_fk_models,
 )
 
@@ -130,3 +134,62 @@ def test_the_tenant_foreign_key_check_flags_only_unlisted_plain_models() -> None
         assert Unrelated is not None
         assert unprotected_tenant_fk_models(iso, ("billing",), {}) == ["billing.Plain"]
         assert unprotected_tenant_fk_models(iso, ("billing",), {Plain: "test reason"}) == []
+
+
+def own_view(request: HttpRequest) -> HttpResponse:
+    """Serve a view that belongs to the project.
+
+    Args:
+        request: Current request.
+
+    Returns:
+        An empty response.
+    """
+    return HttpResponse()
+
+
+def allauth_view(request: HttpRequest) -> HttpResponse:
+    """Serve a view that claims to live in the allauth package.
+
+    Args:
+        request: Current request.
+
+    Returns:
+        An empty response.
+    """
+    return HttpResponse()
+
+
+allauth_view.__module__ = "allauth.fake"
+
+
+def test_every_project_url_name_has_isolation_cases() -> None:
+    """A project URL added without listing it in the registry fails here."""
+    import config.urls
+
+    names = project_url_names(config.urls.urlpatterns)
+    assert names, "no project URL found, the check would be vacuous"
+    assert sorted(set(names) - URL_ISOLATION_CASES) == []
+
+
+def test_the_url_check_skips_admin_allauth_and_unnamed_patterns() -> None:
+    """Only named, project owned, non-admin URLs are reported, with their namespace."""
+    admin_like = include(([path("", own_view, name="index")], "admin"))
+    shop = include(([path("", own_view, name="list"), path("x/", own_view)], "shop"))
+    patterns: list[URLPattern | URLResolver] = [
+        path("a/", own_view, name="a"),
+        path("unnamed/", own_view),
+        path("allauth/", allauth_view, name="allauth_page"),
+        path("admin/", admin_like),
+        path("shop/", shop),
+    ]
+    assert project_url_names(patterns) == ["a", "shop:list"]
+    patterns.append(path("new/", own_view, name="new"))
+    assert project_url_names(patterns) == ["a", "shop:list", "new"]
+    assert project_url_names(patterns, skip_namespaces=(), skip_modules=()) == [
+        "a",
+        "allauth_page",
+        "admin:index",
+        "shop:list",
+        "new",
+    ]
