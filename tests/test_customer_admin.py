@@ -68,9 +68,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     """
     log: list[tuple[str, str]] = []
 
-    def wrap(
-        name: str, func: Callable[[Principal | None, Customer], Any]
-    ) -> Callable[[Principal | None, Customer], Any]:
+    def wrap(name: str, func: Service) -> Service:
         """Wrap a service so that its calls are recorded.
 
         Args:

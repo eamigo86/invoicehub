@@ -1,0 +1,95 @@
+"""Billing services never act across tenants, whatever the principal holds."""
+
+import pytest
+from django.core.exceptions import PermissionDenied
+
+from billing.models import Customer
+from billing.services import delete_customer, save_customer
+from tenancy.context import TenantMismatch, tenant_context
+from tenancy.models import Tenant
+from tenancy.permissions import Permission, Principal
+
+pytestmark = [pytest.mark.isolation, pytest.mark.django_db]
+
+
+def owner_of(tenant: Tenant) -> Principal:
+    """Build a principal holding every permission in a tenant.
+
+    Args:
+        tenant: Tenant the principal acts in.
+
+    Returns:
+        The principal.
+    """
+    return Principal(tenant.pk, frozenset(Permission))
+
+
+@pytest.fixture
+def tenants() -> tuple[Tenant, Tenant]:
+    """Create two tenants.
+
+    Returns:
+        Tenants A and B.
+    """
+    return Tenant.objects.create(name="A"), Tenant.objects.create(name="B")
+
+
+def test_b_cannot_modify_a_customer_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, saving A's customer is refused and A's row keeps its name.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        customer = save_customer(owner_of(a), Customer(name="Acme"))
+    customer.name = "Hacked"
+    with tenant_context(b.pk), pytest.raises(TenantMismatch):
+        save_customer(owner_of(b), customer)
+    with tenant_context(a.pk):
+        assert Customer.objects.get(pk=customer.pk).name == "Acme"
+
+
+def test_b_cannot_delete_a_customer_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, deleting A's customer is a no-op, because Row-Level Security hides the row.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        customer = save_customer(owner_of(a), Customer(name="Acme"))
+    pk = customer.pk
+    with tenant_context(b.pk):
+        delete_customer(owner_of(b), customer)
+    with tenant_context(a.pk):
+        assert Customer.objects.filter(pk=pk).exists()
+
+
+def test_a_principal_of_a_cannot_save_while_b_is_current(tenants: tuple[Tenant, Tenant]) -> None:
+    """A principal of A holding invoices:write is refused under B and nothing is stored.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(b.pk):
+        with pytest.raises(PermissionDenied):
+            save_customer(owner_of(a), Customer(name="Acme"))
+        assert Customer.objects.count() == 0
+
+
+def test_a_principal_of_a_cannot_delete_while_b_is_current(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """A principal of A holding invoices:write cannot delete B's customer while B is current.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(b.pk):
+        customer = save_customer(owner_of(b), Customer(name="Bolt"))
+        with pytest.raises(PermissionDenied):
+            delete_customer(owner_of(a), customer)
+        assert Customer.objects.filter(pk=customer.pk).exists()

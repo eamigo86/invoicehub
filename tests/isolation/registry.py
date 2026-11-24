@@ -4,9 +4,13 @@ Adding a tenant model without a factory here fails the meta-test, which is how e
 gets its isolation cases: the parametrized suite runs against whatever this registry holds.
 """
 
+import importlib
+import importlib.util
+import inspect
 import uuid
 from collections.abc import Callable, Sequence
 
+from celery import Celery
 from django.apps import apps
 from django.apps.registry import Apps
 from django.db import models
@@ -143,3 +147,56 @@ URL_ISOLATION_CASES: frozenset[str] = frozenset({"tenancy:list", "tenancy:select
 """Names of the project URLs that have isolation cases; add every new project URL name here.
 
 The cases for the tenancy URLs are in test_tenant_selection."""
+
+
+def project_service_functions(
+    registry: Apps = apps, labels: tuple[str, ...] = BUSINESS_APPS
+) -> list[str]:
+    """List the public functions defined in the services module of each business app.
+
+    Imported names are left out, and apps without a services module are skipped.
+
+    Args:
+        registry: App registry to inspect.
+        labels: Business app labels to inspect, which must all be installed in the registry.
+
+    Returns:
+        The dotted names such as billing.services.save_customer, ordered.
+    """
+    names: list[str] = []
+    for label in labels:
+        module_name = f"{registry.get_app_config(label).name}.services"
+        if importlib.util.find_spec(module_name) is None:
+            continue
+        module = importlib.import_module(module_name)
+        names.extend(
+            f"{module_name}.{name}"
+            for name, func in inspect.getmembers(module, inspect.isfunction)
+            if func.__module__ == module_name and not name.startswith("_")
+        )
+    return sorted(names)
+
+
+SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
+    {"billing.services.save_customer", "billing.services.delete_customer"}
+)
+"""Dotted names of the service functions that have isolation cases; add every new one here.
+
+The cases are in test_services."""
+
+
+def project_task_names(celery_app: Celery) -> list[str]:
+    """List the Celery tasks registered by project modules.
+
+    Args:
+        celery_app: Celery application whose task registry is inspected, after autodiscovery.
+
+    Returns:
+        The task names, built-in celery.* tasks left out, ordered.
+    """
+    celery_app.loader.import_default_modules()
+    return sorted(name for name in celery_app.tasks if not name.startswith("celery."))
+
+
+TASK_ISOLATION_CASES: frozenset[str] = frozenset()
+"""Names of the Celery tasks that have isolation cases; add every new task here."""
