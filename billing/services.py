@@ -501,7 +501,8 @@ def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
     when the issued credit notes of the original, this one included, would exceed its total, and
     InvalidTransition when the original can no longer be credited. When the credits reach the
     total exactly, the original becomes voided and invoice.voided is recorded, all in the same
-    transaction.
+    transaction. When the credits are below the total but payments cover the rest, so nothing
+    is owed any more, the original becomes paid and invoice.paid is recorded instead.
 
     Args:
         principal: Acting principal, who needs invoices:write or PermissionDenied is raised.
@@ -586,6 +587,21 @@ def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
         record_event(
             principal,
             "invoice.voided",
+            "invoice",
+            original.pk,
+            {"status": before_status},
+            {"status": original.status},
+        )
+    elif (
+        original is not None
+        and original.balance_due() <= 0
+        and before_status != Invoice.Status.PAID
+    ):
+        original.status = Invoice.Status.PAID
+        original.save(update_fields=["status", "updated_at"])
+        record_event(
+            principal,
+            "invoice.paid",
             "invoice",
             original.pk,
             {"status": before_status},
@@ -730,10 +746,6 @@ def delete_series(principal: Principal | None, series: InvoiceSeries) -> None:
     series.delete()
 
 
-PAYABLE_STATUSES = (Invoice.Status.ISSUED, Invoice.Status.SENT, Invoice.Status.PARTIALLY_PAID)
-"""Statuses of an invoice that can still receive a payment."""
-
-
 @transaction.atomic
 def record_payment(
     principal: Principal | None, payment: Payment, allocations: list[tuple[Invoice, int]]
@@ -777,7 +789,7 @@ def record_payment(
     plan: list[tuple[Invoice, int, int]] = []
     for invoice, cents in sorted(allocations, key=lambda pair: pair[0].pk):
         row = locked[invoice.pk]
-        if row.kind != Invoice.Kind.INVOICE or row.status not in PAYABLE_STATUSES:
+        if row.kind != Invoice.Kind.INVOICE or row.status not in Invoice.PAYABLE_STATUSES:
             raise InvalidTransition(f"{row.kind} is {row.status}, it cannot be paid")
         if row.currency != payment.currency:
             raise ValidationError("The payment and the invoice are in different currencies.")
