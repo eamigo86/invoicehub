@@ -15,6 +15,7 @@ from uuid import UUID
 from django.db import connection, transaction
 
 __all__ = [
+    "TenantMismatch",
     "TenantNotSet",
     "apply_tenant",
     "current_tenant_id",
@@ -27,6 +28,10 @@ __all__ = [
 
 class TenantNotSet(Exception):
     """Raised when tenant-scoped code runs without an active tenant."""
+
+
+class TenantMismatch(Exception):
+    """Raised when a row of one tenant is written while another tenant is active."""
 
 
 current_tenant_id: ContextVar[UUID | None] = ContextVar("current_tenant_id", default=None)
