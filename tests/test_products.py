@@ -6,6 +6,7 @@ import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.test import Client
 
+import billing.admin
 from accounts.models import User
 from billing.models import Product, ProductTaxRate, TaxRate
 from billing.services import delete_product, save_product
@@ -209,6 +210,38 @@ class TestProductAdmin:
         assert client.post("/admin/billing/product/add/", data).status_code == 200
         with tenant_context(tenant.pk):
             assert Product.objects.count() == 0
+
+    def test_bulk_delete_goes_through_the_service(
+        self, client: Client, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The delete-selected action calls delete_product for every row.
+
+        Args:
+            client: Django test client fixture.
+            monkeypatch: Fixture used to record the service calls.
+        """
+        deleted: list[str] = []
+        original = delete_product
+
+        def record(principal: Principal | None, row: Product) -> None:
+            """Record the call, then delete through the real service.
+
+            Args:
+                principal: Acting principal.
+                row: Row being deleted.
+            """
+            deleted.append(row.name)
+            original(principal, row)
+
+        monkeypatch.setattr(billing.admin, "delete_product", record)
+        tenant = self.login(client)
+        with tenant_context(tenant.pk):
+            pks = [str(Product.objects.create(name=name, unit_price=1).pk) for name in ("a", "b")]
+        data = {"action": "delete_selected", "_selected_action": pks, "post": "yes"}
+        client.post("/admin/billing/product/", data)
+        assert sorted(deleted) == ["a", "b"]
+        with tenant_context(tenant.pk):
+            assert not Product.objects.exists()
 
 
 def test_the_unit_price_help_text_says_cents() -> None:

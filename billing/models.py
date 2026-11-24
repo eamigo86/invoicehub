@@ -101,11 +101,3 @@ class ProductTaxRate(TenantModel):
                 fields=["tenant", "product", "tax_rate"], name="producttaxrate_tenant_pair_uniq"
             )
         ]
-
-    def __str__(self) -> str:
-        """Describe the link by product and tax rate.
-
-        Returns:
-            A label such as Widget / Austin.
-        """
-        return f"{self.product} / {self.tax_rate}"
