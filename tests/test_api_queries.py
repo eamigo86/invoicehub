@@ -255,7 +255,7 @@ def test_a_customer_hidden_by_its_read_service_is_hidden_inside_an_invoice(
         monkeypatch: Pytest monkeypatch fixture.
     """
     token = make_world("A", invoices=1)
-    monkeypatch.setattr("api.schema.list_customers", lambda principal: Customer.objects.none())
+    monkeypatch.setattr("api.types.list_customers", lambda principal: Customer.objects.none())
     result = data("{ invoices { results(first: 5) { customer { name } } } }", token)
     assert result["invoices"]["results"] == [{"customer": None}]
 
@@ -269,7 +269,7 @@ def test_a_payment_hidden_by_its_read_service_is_hidden_inside_an_allocation(
         monkeypatch: Pytest monkeypatch fixture.
     """
     token = make_world("A", invoices=1)
-    monkeypatch.setattr("api.schema.list_payments", lambda principal: Payment.objects.none())
+    monkeypatch.setattr("api.types.list_payments", lambda principal: Payment.objects.none())
     query = (
         "{ invoices { results(first: 5) { allocations { results { amount payment { id } } } } } }"
     )
