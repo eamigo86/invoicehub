@@ -31,7 +31,10 @@ from billing.services import (
     delete_tax_rate,
     draft_credit_note,
     issue_invoice,
+    list_customers,
     list_invoices,
+    list_payments,
+    list_products,
     record_event,
     record_payment,
     reverse_payment,
@@ -54,6 +57,8 @@ from reconciliation.models import (
 from reconciliation.services import (
     accept_proposal,
     create_import,
+    list_match_proposals,
+    list_reconciliation_runs,
     reassign_proposal,
     reject_proposal,
     run_reconciliation,
@@ -1040,3 +1045,53 @@ def test_a_principal_of_a_cannot_list_invoices_while_b_is_current(
     a, b = tenants
     with tenant_context(b.pk), pytest.raises(PermissionDenied):
         list_invoices(owner_of(a))
+
+
+def test_b_cannot_list_the_customers_products_and_payments_of_a(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """Under each tenant, the catalog and payment read services return only its own rows.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    complete_issuer(a, b)
+    rows = {}
+    for tenant in (a, b):
+        with tenant_context(tenant.pk):
+            customer = Customer.objects.create(name=f"{tenant.name} client")
+            invoice = issued_invoice(owner_of(tenant), customer)
+            rows[tenant.pk] = (
+                customer,
+                Product.objects.create(name=f"{tenant.name} product", unit_price=100),
+                record_payment(
+                    owner_of(tenant),
+                    Payment(amount=1000, currency=Currency.USD, value_date=date(2026, 6, 15)),
+                    [(invoice, 1000)],
+                ),
+            )
+    for tenant in (a, b):
+        customer, product, payment = rows[tenant.pk]
+        with tenant_context(tenant.pk):
+            assert list(list_customers(owner_of(tenant))) == [customer]
+            assert list(list_products(owner_of(tenant))) == [product]
+            assert list(list_payments(owner_of(tenant))) == [payment]
+
+
+def test_b_cannot_list_the_runs_and_proposals_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under each tenant, the reconciliation read services return only its own rows.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    proposals = {}
+    for tenant in (a, b):
+        with tenant_context(tenant.pk):
+            proposals[tenant.pk] = propose("1-1", [], [])
+    for tenant in (a, b):
+        proposal = proposals[tenant.pk]
+        with tenant_context(tenant.pk):
+            assert list(list_match_proposals(owner_of(tenant))) == [proposal]
+            assert list(list_reconciliation_runs(owner_of(tenant))) == [proposal.run]

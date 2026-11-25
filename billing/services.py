@@ -72,6 +72,51 @@ def list_invoices(principal: Principal | None) -> QuerySet[Invoice]:
     return Invoice.objects.all()
 
 
+def list_customers(principal: Principal | None) -> QuerySet[Customer]:
+    """Return the customers the principal may read in the current tenant.
+
+    Row-Level Security and the tenant manager scope the rows; this adds the permission check.
+
+    Args:
+        principal: Acting principal, who needs invoices:read or PermissionDenied is raised.
+
+    Returns:
+        A queryset of the customers of the current tenant.
+    """
+    require_permission(principal, Permission.INVOICES_READ)
+    return Customer.objects.all()
+
+
+def list_products(principal: Principal | None) -> QuerySet[Product]:
+    """Return the products the principal may read in the current tenant.
+
+    Row-Level Security and the tenant manager scope the rows; this adds the permission check.
+
+    Args:
+        principal: Acting principal, who needs invoices:read or PermissionDenied is raised.
+
+    Returns:
+        A queryset of the products of the current tenant.
+    """
+    require_permission(principal, Permission.INVOICES_READ)
+    return Product.objects.all()
+
+
+def list_payments(principal: Principal | None) -> QuerySet[Payment]:
+    """Return the payments the principal may read in the current tenant.
+
+    Row-Level Security and the tenant manager scope the rows; this adds the permission check.
+
+    Args:
+        principal: Acting principal, who needs invoices:read or PermissionDenied is raised.
+
+    Returns:
+        A queryset of the payments of the current tenant.
+    """
+    require_permission(principal, Permission.INVOICES_READ)
+    return Payment.objects.all()
+
+
 def update_issuer(principal: Principal | None, tenant: Tenant) -> Tenant:
     """Validate and save the issuer details of the current tenant.
 
