@@ -1,13 +1,16 @@
 """Billing services never act across tenants, whatever the principal holds."""
 
+import uuid
+
 import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
 
-from billing.models import Customer, Product, ProductTaxRate, TaxRate
+from billing.models import AuditEvent, Customer, Product, ProductTaxRate, TaxRate
 from billing.services import (
     delete_customer,
     delete_product,
     delete_tax_rate,
+    record_event,
     save_customer,
     save_product,
     save_tax_rate,
@@ -289,3 +292,35 @@ def test_a_principal_of_a_cannot_delete_a_product_while_b_is_current(
         with pytest.raises(PermissionDenied):
             delete_product(owner_of(a), product)
         assert Product.objects.filter(pk=product.pk).exists()
+
+
+def test_a_principal_of_a_cannot_record_an_event_while_b_is_current(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """A principal of A is refused under B and nothing is stored.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(b.pk):
+        with pytest.raises(PermissionDenied):
+            record_event(owner_of(a), "invoice.issued", "invoice", uuid.uuid4())
+        assert AuditEvent.objects.count() == 0
+
+
+def test_the_events_of_a_are_invisible_under_b(tenants: tuple[Tenant, Tenant]) -> None:
+    """An event recorded for A is never listed, counted or fetched under B.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        event = record_event(owner_of(a), "invoice.issued", "invoice", uuid.uuid4())
+    with tenant_context(b.pk):
+        assert AuditEvent.objects.count() == 0
+        assert not AuditEvent.objects.filter(pk=event.pk).exists()
+        assert not AuditEvent._base_manager.filter(pk=event.pk).exists()
+    with tenant_context(a.pk):
+        assert AuditEvent.objects.get().pk == event.pk

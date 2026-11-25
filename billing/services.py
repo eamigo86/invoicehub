@@ -10,12 +10,14 @@ another tenant raises ValidationError.
 # ponytail: writes that bypass the services are not checked; composite (tenant_id, id) foreign
 # keys would enforce it in the database.
 
+import uuid
 from collections.abc import Iterable
+from typing import Any
 
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 
-from billing.models import Customer, Product, ProductTaxRate, TaxRate
+from billing.models import AuditEvent, Customer, Product, ProductTaxRate, TaxRate
 from tenancy.context import require_current_tenant_id
 from tenancy.models import Tenant, TenantModel
 from tenancy.permissions import Permission, Principal, require_permission
@@ -168,3 +170,57 @@ def delete_product(principal: Principal | None, product: Product) -> None:
     """
     require_permission(principal, Permission.INVOICES_WRITE)
     product.delete()
+
+
+def record_event(
+    principal: Principal | None,
+    action: str,
+    entity: str,
+    entity_id: uuid.UUID,
+    before: dict[str, Any] | None = None,
+    after: dict[str, Any] | None = None,
+) -> AuditEvent:
+    """Append an event to the audit log of the current tenant.
+
+    Services call this inside their own transaction, so the event commits or rolls back with
+    the change it describes. The log has no update or delete service. The actor is a token when
+    the principal carries a token id, a user when it carries a user id, and the system when
+    there is no principal.
+
+    Args:
+        principal: Acting principal, or None for work done by the system.
+        action: What happened, for example invoice.issued.
+        entity: Kind of the entity acted on, for example invoice.
+        entity_id: Primary key of that entity.
+        before: Relevant state before the action, if any.
+        after: Relevant state after the action, if any.
+
+    Returns:
+        The saved event.
+
+    Raises:
+        PermissionDenied: When the principal belongs to a tenant other than the current one.
+    """
+    user_id = token_id = None
+    if principal is not None:
+        if principal.tenant_id != require_current_tenant_id():
+            raise PermissionDenied("principal belongs to another tenant")
+        user_id, token_id = principal.user_id, principal.token_id
+    if token_id is not None:
+        kind = AuditEvent.ActorKind.TOKEN
+    elif user_id is not None:
+        kind = AuditEvent.ActorKind.USER
+    else:
+        kind = AuditEvent.ActorKind.SYSTEM
+    event = AuditEvent(
+        actor_kind=kind,
+        actor_user_id=user_id,
+        actor_token_id=token_id,
+        action=action,
+        entity=entity,
+        entity_id=entity_id,
+        before=before,
+        after=after,
+    )
+    event.save()
+    return event

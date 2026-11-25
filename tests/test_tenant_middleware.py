@@ -74,7 +74,7 @@ def test_member_gets_the_session_tenant_and_a_principal() -> None:
     user, tenant = member(Membership.Role.VIEWER)
     seen, after, principal = run({"tenant_id": str(tenant.pk)}, user)
     assert (seen, after) == (tenant.pk, None)
-    assert principal == Principal(tenant.pk, frozenset({Permission.INVOICES_READ}))
+    assert principal == Principal(tenant.pk, frozenset({Permission.INVOICES_READ}), user_id=user.pk)
 
 
 @pytest.mark.django_db

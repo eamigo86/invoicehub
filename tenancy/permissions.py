@@ -44,10 +44,14 @@ class Principal:
     Attributes:
         tenant_id: Tenant the actor acts in.
         permissions: Permissions the actor holds in that tenant.
+        user_id: Primary key of the acting user, None unless the actor is a member.
+        token_id: Primary key of the acting API token, None unless the actor is a token.
     """
 
     tenant_id: uuid.UUID
     permissions: frozenset[Permission]
+    user_id: int | None = None
+    token_id: int | None = None
 
     @classmethod
     def from_membership(cls, membership: Membership) -> "Principal":
@@ -57,9 +61,14 @@ class Principal:
             membership: Membership of the acting user.
 
         Returns:
-            A principal for the membership tenant with the permissions of its role.
+            A principal for the membership tenant with the permissions of its role, identifying
+            the member.
         """
-        return cls(membership.tenant_id, ROLE_PERMISSIONS[Membership.Role(membership.role)])
+        return cls(
+            membership.tenant_id,
+            ROLE_PERMISSIONS[Membership.Role(membership.role)],
+            user_id=membership.user_id,
+        )
 
     @classmethod
     def from_token(cls, token: ApiToken) -> "Principal":
@@ -71,9 +80,14 @@ class Principal:
             token: Active API token.
 
         Returns:
-            A principal for the token tenant holding exactly the token scopes.
+            A principal for the token tenant holding exactly the token scopes, identifying the
+            token.
         """
-        return cls(token.tenant_id, frozenset(Permission(scope) for scope in token.scopes))
+        return cls(
+            token.tenant_id,
+            frozenset(Permission(scope) for scope in token.scopes),
+            token_id=token.pk,
+        )
 
 
 def has_permission(principal: Principal | None, permission: Permission) -> bool:
