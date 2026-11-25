@@ -1,6 +1,7 @@
 """Billing services never act across tenants, whatever the principal holds."""
 
 import uuid
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -12,6 +13,8 @@ from billing.models import (
     Invoice,
     InvoiceLine,
     InvoiceSeries,
+    Payment,
+    PaymentAllocation,
     Product,
     ProductTaxRate,
     TaxRate,
@@ -26,6 +29,7 @@ from billing.services import (
     draft_credit_note,
     issue_invoice,
     record_event,
+    record_payment,
     save_customer,
     save_draft,
     save_product,
@@ -33,6 +37,7 @@ from billing.services import (
     save_tax_rate,
     update_issuer,
 )
+from core.models import Currency
 from tenancy.context import TenantMismatch, tenant_context
 from tenancy.models import Tenant
 from tenancy.permissions import Permission, Principal
@@ -657,3 +662,58 @@ def test_b_cannot_delete_the_series_of_a(tenants: tuple[Tenant, Tenant]) -> None
         delete_series(owner_of(b), series)
     with tenant_context(a.pk):
         assert InvoiceSeries.objects.filter(pk=pk).exists()
+
+
+def issued_for(tenant: Tenant) -> Invoice:
+    """Issue an invoice of 100 cents in a tenant, which must be the active one.
+
+    Args:
+        tenant: Active tenant with complete issuer details.
+
+    Returns:
+        The issued invoice.
+    """
+    customer = save_customer(owner_of(tenant), Customer(name="Client"))
+    draft = save_draft(
+        owner_of(tenant), Invoice(customer=customer), [DraftLine("L", Decimal(1), 100)]
+    )
+    return issue_invoice(owner_of(tenant), draft)
+
+
+def test_b_cannot_pay_an_invoice_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, A's invoice is not found: no payment is stored and A's invoice stays issued.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    complete_issuer(a, b)
+    with tenant_context(a.pk):
+        invoice = issued_for(a)
+    payment = Payment(amount=100, currency=Currency.USD, value_date=date(2026, 6, 15))
+    with tenant_context(b.pk), pytest.raises(Invoice.DoesNotExist):
+        record_payment(owner_of(b), payment, [(invoice, 100)])
+    with tenant_context(b.pk):
+        assert (Payment.objects.count(), PaymentAllocation.objects.count()) == (0, 0)
+    with tenant_context(a.pk):
+        assert Invoice.objects.get(pk=invoice.pk).status == Invoice.Status.ISSUED
+        assert not PaymentAllocation.objects.exists()
+
+
+def test_a_principal_of_a_cannot_record_a_payment_while_b_is_current(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """A principal of A is refused under B and B's invoice receives nothing.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    complete_issuer(a, b)
+    payment = Payment(amount=100, currency=Currency.USD, value_date=date(2026, 6, 15))
+    with tenant_context(b.pk):
+        invoice = issued_for(b)
+        with pytest.raises(PermissionDenied):
+            record_payment(owner_of(a), payment, [(invoice, 100)])
+        assert not Payment.objects.exists()
+        assert Invoice.objects.get().status == Invoice.Status.ISSUED

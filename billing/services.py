@@ -20,7 +20,6 @@ from typing import Any
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
-from django.db.models import Sum
 from django.utils import timezone
 
 from billing.calculations import LineInput, TaxRateInput, invoice_totals
@@ -31,6 +30,8 @@ from billing.models import (
     InvoiceLine,
     InvoiceLineTax,
     InvoiceSeries,
+    Payment,
+    PaymentAllocation,
     Product,
     ProductTaxRate,
     TaxRate,
@@ -460,20 +461,6 @@ def _lock_series(kind: str, local_year: int) -> InvoiceSeries:
     return locked
 
 
-def _credited_total(original: Invoice) -> int:
-    """Add up the totals of the issued credit notes of an invoice.
-
-    Args:
-        original: Invoice whose credit notes are summed.
-
-    Returns:
-        The credited amount in cents.
-    """
-    issued = original.credit_notes.exclude(status=Invoice.Status.DRAFT)
-    total: int = issued.aggregate(total=Sum("total"))["total"] or 0
-    return total
-
-
 def _lock_original(note: Invoice) -> Invoice:
     """Lock the original of a credit note and check that this note may still be issued.
 
@@ -490,7 +477,7 @@ def _lock_original(note: Invoice) -> Invoice:
     """
     original: Invoice = Invoice.objects.select_for_update().get(pk=note.original_id)
     _require_creditable(original)
-    if _credited_total(original) + note.total > original.total:
+    if original.credited_total() + note.total > original.total:
         raise ValidationError("The credit notes would exceed the total of the original invoice.")
     return original
 
@@ -593,7 +580,7 @@ def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
     stored.save()
     after = _snapshot(stored) | {"reference": reference}
     record_event(principal, "invoice.issued", "invoice", stored.pk, before, after)
-    if original is not None and _credited_total(original) == original.total:
+    if original is not None and original.credited_total() == original.total:
         original.status = Invoice.Status.VOIDED
         original.save(update_fields=["status", "updated_at"])
         record_event(
@@ -741,3 +728,82 @@ def delete_series(principal: Principal | None, series: InvoiceSeries) -> None:
     """
     require_permission(principal, Permission.SETTINGS_MANAGE)
     series.delete()
+
+
+PAYABLE_STATUSES = (Invoice.Status.ISSUED, Invoice.Status.SENT, Invoice.Status.PARTIALLY_PAID)
+"""Statuses of an invoice that can still receive a payment."""
+
+
+@transaction.atomic
+def record_payment(
+    principal: Principal | None, payment: Payment, allocations: list[tuple[Invoice, int]]
+) -> Payment:
+    """Record a payment and apply it to invoices, setting each invoice paid or partially paid.
+
+    The invoices are locked in primary key order, so concurrent payments cannot deadlock, and
+    their balances are read after the lock, so two payments never both use the same balance.
+    Nothing is stored unless every check passes. A part of the payment that is not allocated
+    stays unallocated, for reconciliation to use later. For each invoice the event
+    invoice.payment_recorded is recorded with its status and balance before and after.
+
+    Args:
+        principal: Acting principal, who needs invoices:write or PermissionDenied is raised.
+        payment: Payment to store, which is validated first.
+        allocations: Pairs of an invoice and the cents of the payment applied to it.
+
+    Returns:
+        The saved payment.
+
+    Raises:
+        Invoice.DoesNotExist: When an invoice is not stored for the current tenant.
+        InvalidTransition: When an invoice is not an invoice in the issued, sent or partially
+            paid status.
+        ValidationError: When an invoice appears twice or is in another currency than the
+            payment, an amount is not positive or exceeds the balance due of its invoice, the
+            allocations together exceed the payment, or the payment itself is invalid.
+    """
+    require_permission(principal, Permission.INVOICES_WRITE)
+    _clean(payment)
+    ids = [invoice.pk for invoice, _ in allocations]
+    if len(set(ids)) != len(ids):
+        raise ValidationError("An invoice can be allocated only once per payment.")
+    locked = {
+        row.pk: row for row in Invoice.objects.select_for_update().filter(pk__in=ids).order_by("pk")
+    }
+    if len(locked) != len(ids):
+        raise Invoice.DoesNotExist("an invoice is not stored for the current tenant")
+    if sum(cents for _, cents in allocations) > payment.amount:
+        raise ValidationError("The allocations exceed the amount of the payment.")
+    plan: list[tuple[Invoice, int, int]] = []
+    for invoice, cents in sorted(allocations, key=lambda pair: pair[0].pk):
+        row = locked[invoice.pk]
+        if row.kind != Invoice.Kind.INVOICE or row.status not in PAYABLE_STATUSES:
+            raise InvalidTransition(f"{row.kind} is {row.status}, it cannot be paid")
+        if row.currency != payment.currency:
+            raise ValidationError("The payment and the invoice are in different currencies.")
+        balance = row.balance_due()
+        if not 0 < cents <= balance:
+            raise ValidationError(
+                f"An allocation must be positive and at most the balance due of {balance}."
+            )
+        plan.append((row, cents, balance))
+    payment.save()
+    for row, cents, balance in plan:
+        allocation = PaymentAllocation(payment=payment, invoice=row, amount=cents)
+        _clean(allocation)
+        allocation.save()
+        before_status = row.status
+        remaining = balance - cents
+        row.status = Invoice.Status.PAID if remaining == 0 else Invoice.Status.PARTIALLY_PAID
+        if row.status != before_status:
+            _clean(row)
+            row.save(update_fields=["status", "updated_at"])
+        record_event(
+            principal,
+            "invoice.payment_recorded",
+            "invoice",
+            row.pk,
+            {"status": before_status, "balance": balance},
+            {"status": row.status, "balance": remaining, "payment_id": payment.pk},
+        )
+    return payment
