@@ -18,7 +18,17 @@ from django.apps.registry import Apps
 from django.db import models
 from django.urls import URLPattern, URLResolver
 
-from billing.models import AuditEvent, Customer, Product, ProductTaxRate, TaxRate
+from billing.models import (
+    AuditEvent,
+    Customer,
+    Invoice,
+    InvoiceLine,
+    InvoiceLineTax,
+    Product,
+    ProductTaxRate,
+    TaxRate,
+)
+from core.models import Currency
 from tenancy.models import ApiToken, Membership, Tenant, TenantModel
 
 
@@ -81,12 +91,53 @@ def make_audit_event() -> TenantModel:
     return event
 
 
+def make_invoice() -> TenantModel:
+    """Create one draft invoice with a new customer for the active tenant.
+
+    Returns:
+        The saved invoice.
+    """
+    invoice: TenantModel = Invoice.objects.create(customer=make_customer(), currency=Currency.USD)
+    return invoice
+
+
+def make_invoice_line() -> TenantModel:
+    """Create one invoice line on a new draft invoice for the active tenant.
+
+    Returns:
+        The saved line.
+    """
+    line: TenantModel = InvoiceLine.objects.create(
+        invoice=make_invoice(),
+        position=1,
+        description=f"line-{uuid.uuid4().hex[:8]}",
+        quantity=1,
+        unit_price=100,
+    )
+    return line
+
+
+def make_invoice_line_tax() -> TenantModel:
+    """Create one line tax on a new invoice line for the active tenant.
+
+    Returns:
+        The saved line tax.
+    """
+    tax: TenantModel = InvoiceLineTax.objects.create(
+        line=make_invoice_line(), name=f"tax-{uuid.uuid4().hex[:8]}", rate_bp=825, amount=8
+    )
+    return tax
+
+
 FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {
     Customer: make_customer,
     TaxRate: make_tax_rate,
     Product: make_product,
     ProductTaxRate: make_product_tax_rate,
     AuditEvent: make_audit_event,
+    Invoice: make_invoice,
+    InvoiceLine: make_invoice_line,
+    InvoiceLineTax: make_invoice_line_tax,
 }
 
 ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {
@@ -94,13 +145,14 @@ ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {
     TaxRate: "name",
     Product: "name",
     AuditEvent: "action",
+    Invoice: "customer",
 }
 """Plain text field of each model's admin form that the isolation tests overwrite with a marker.
 
 Every other form value comes from the admin's own change form, so the POST stays valid."""
 
 
-READ_ONLY_ADMINS: frozenset[type[TenantModel]] = frozenset({AuditEvent})
+READ_ONLY_ADMINS: frozenset[type[TenantModel]] = frozenset({AuditEvent, Invoice})
 """Models whose admin refuses every add, change and delete for everyone.
 
 The admin isolation suite expects writes to be refused for these and still runs every
@@ -112,7 +164,8 @@ def clone_values(model: type[TenantModel]) -> dict[str, Any]:
     """Pick column values that let a second row of the active tenant coexist with a factory row.
 
     Tests that copy a row use them so that unique constraints are not violated. A model with a
-    marker text field gets a fresh text; a link model gets another row to point at.
+    marker text field gets a fresh text; a link model gets another row to point at; a line gets
+    another position.
 
     Args:
         model: Tenant model under test.
@@ -122,6 +175,10 @@ def clone_values(model: type[TenantModel]) -> dict[str, Any]:
     """
     if model is ProductTaxRate:
         return {"tax_rate_id": make_tax_rate().pk}
+    if model is InvoiceLine:
+        return {"position": 2}
+    if model is Invoice:
+        return {"notes": f"clone-{uuid.uuid4().hex}"}
     return {ADMIN_MARKER_FIELDS.get(model, "name"): f"clone-{uuid.uuid4().hex}"}
 
 
