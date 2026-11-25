@@ -94,7 +94,8 @@ one. Tenant models stay hidden in the admin until a company is active.
 
 ### Ports
 
-Override them with environment variables or a `.env` file.
+They listen on 127.0.0.1 only, so the demo login and the databases stay on this machine. Override
+the ports with environment variables or a `.env` file.
 
 | Service | URL / port | Variable |
 | --- | --- | --- |
