@@ -1,12 +1,18 @@
 """Shared pytest configuration: Hypothesis profiles, a temporary media root and no broker."""
 
 import os
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from hypothesis import settings
+
+# WeasyPrint falls back to ctypes.util.find_library, which reads this variable at call time.
+# uv strips DYLD_* variables when it starts Python on macOS, so Homebrew's Pango is set here.
+if sys.platform == "darwin":
+    os.environ.setdefault("DYLD_FALLBACK_LIBRARY_PATH", "/opt/homebrew/lib")
 
 settings.register_profile("default", deadline=None)
 settings.register_profile("ci", derandomize=True, deadline=None)
