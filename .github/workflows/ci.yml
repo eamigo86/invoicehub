@@ -47,6 +47,11 @@ jobs:
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           version: "0.13.9"
+      - name: Install WeasyPrint system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fonts-dejavu-core
       - run: uv sync --frozen
       - name: Create database roles
         env:
