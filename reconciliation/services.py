@@ -6,6 +6,8 @@ of another tenant is not found.
 """
 
 import hashlib
+import uuid
+from typing import Any
 
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
@@ -203,8 +205,13 @@ def _lock_proposal_rows(
 
 
 @transaction.atomic
-def _apply_proposal(principal: Principal | None, proposal: MatchProposal) -> list[Payment]:
-    """Record the bank payments of a pending proposal and mark it applied.
+def _apply_proposal(
+    principal: Principal | None,
+    proposal: MatchProposal,
+    *,
+    reassigned_from: dict[str, Any] | None = None,
+) -> list[Payment]:
+    """Record the bank payments of a pending proposal and mark it applied or reassigned.
 
     Runs in a savepoint, so any error leaves nothing written and the caller's transaction
     usable. The proposal, its transactions and its invoices are locked, and balances are read
@@ -213,12 +220,18 @@ def _apply_proposal(principal: Principal | None, proposal: MatchProposal) -> lis
     already took. One to one and one to many proposals give one payment with all allocations;
     many to one gives one payment per transaction. A transaction with nothing left to allocate
     still gets its payment, unallocated, so the bank money is accounted for. Each transaction is
-    linked to its payment, and the event reconciliation.proposal_applied is recorded.
+    linked to its payment. The final state is applied and the event is
+    reconciliation.proposal_applied, unless reassigned_from is given: then the proposal ends
+    reassigned and the event is reconciliation.proposal_reassigned, whose before state lists
+    the engine's kind and invoice ids, and whose after state lists the kind and invoices
+    linked now.
 
     Args:
         principal: Acting principal, who needs reconciliation:write and invoices:write, or
             PermissionDenied is raised. Without a user or token the actor is the system.
         proposal: Proposal to apply, read again under lock.
+        reassigned_from: The engine's kind and invoice ids, recorded in the before state, when
+            the user chose other invoices, or None for a plain application.
 
     Returns:
         The payments recorded, in transaction order.
@@ -268,16 +281,189 @@ def _apply_proposal(principal: Principal | None, proposal: MatchProposal) -> lis
         tx.payment = payment
         tx.save(update_fields=["payment"])
         created.append(payment)
-    locked.state = MatchProposal.State.APPLIED
+    final = (
+        MatchProposal.State.APPLIED if reassigned_from is None else MatchProposal.State.REASSIGNED
+    )
+    locked.state = final
+    locked.decided_at = timezone.now()
+    locked.decided_by_id = principal.user_id if principal else None
+    locked.save(update_fields=["state", "decided_at", "decided_by"])
+    before: dict[str, Any] = {"state": MatchProposal.State.PENDING}
+    after: dict[str, Any] = {"state": final, "payment_ids": [p.pk for p in created]}
+    if reassigned_from is not None:
+        before.update(reassigned_from)
+        after["kind"] = locked.kind
+        after["invoice_ids"] = [row.pk for row in invoices]
+    record_event(
+        principal,
+        "reconciliation.proposal_applied"
+        if reassigned_from is None
+        else "reconciliation.proposal_reassigned",
+        "match_proposal",
+        locked.pk,
+        before,
+        after,
+    )
+    return created
+
+
+def _link_ids(
+    model: type[MatchProposalTransaction] | type[MatchProposalInvoice],
+    proposal: MatchProposal,
+    column: str,
+) -> list[uuid.UUID]:
+    """List the ids a proposal links, in key order.
+
+    Args:
+        model: Link model to read.
+        proposal: Proposal whose links are listed.
+        column: Name of the linked id column.
+
+    Returns:
+        The linked ids.
+    """
+    return list(
+        model.objects.filter(proposal=proposal).order_by(column).values_list(column, flat=True)
+    )
+
+
+@transaction.atomic
+def accept_proposal(principal: Principal | None, proposal: MatchProposal) -> list[Payment]:
+    """Apply a pending proposal on behalf of the user who reviewed it.
+
+    The engine status does not matter: suggested and ambiguous proposals are accepted the same
+    way as any other pending one. The work is _apply_proposal with the user's principal, so the
+    payments, the applied state, decided_by and the audit event name the user. Both
+    reconciliation:write and invoices:write are checked first, so a refusal writes nothing.
+
+    Args:
+        principal: Acting principal, who needs reconciliation:write and invoices:write or
+            PermissionDenied is raised.
+        proposal: Proposal to accept, read again under lock.
+
+    Returns:
+        The payments recorded, in transaction order.
+    """
+    require_permission(principal, Permission.RECONCILIATION_WRITE)
+    require_permission(principal, Permission.INVOICES_WRITE)
+    return _apply_proposal(principal, proposal)
+
+
+@transaction.atomic
+def reject_proposal(principal: Principal | None, proposal: MatchProposal) -> MatchProposal:
+    """Reject a pending proposal, which frees its transactions and invoices for the next run.
+
+    The proposal is locked and must be pending. Its state, the deciding user and the time are
+    stored and the event reconciliation.proposal_rejected records the state before and after.
+    No payment is recorded.
+
+    Args:
+        principal: Acting principal, who needs reconciliation:write or PermissionDenied is
+            raised.
+        proposal: Proposal to reject, read again under lock.
+
+    Returns:
+        The rejected proposal.
+
+    Raises:
+        InvalidTransition: When the proposal is not pending.
+    """
+    require_permission(principal, Permission.RECONCILIATION_WRITE)
+    locked: MatchProposal = MatchProposal.objects.select_for_update().get(pk=proposal.pk)
+    if locked.state != MatchProposal.State.PENDING:
+        raise InvalidTransition(f"the proposal is {locked.state}, it cannot be rejected")
+    locked.state = MatchProposal.State.REJECTED
     locked.decided_at = timezone.now()
     locked.decided_by_id = principal.user_id if principal else None
     locked.save(update_fields=["state", "decided_at", "decided_by"])
     record_event(
         principal,
-        "reconciliation.proposal_applied",
+        "reconciliation.proposal_rejected",
         "match_proposal",
         locked.pk,
-        {"state": MatchProposal.State.PENDING},
-        {"state": MatchProposal.State.APPLIED, "payment_ids": [p.pk for p in created]},
+        {
+            "state": MatchProposal.State.PENDING,
+            "transaction_ids": _link_ids(MatchProposalTransaction, locked, "transaction_id"),
+            "invoice_ids": _link_ids(MatchProposalInvoice, locked, "invoice_id"),
+        },
+        {"state": MatchProposal.State.REJECTED},
     )
-    return created
+    return locked
+
+
+@transaction.atomic
+def reassign_proposal(
+    principal: Principal | None, proposal: MatchProposal, invoices: list[Invoice]
+) -> list[Payment]:
+    """Keep the bank transactions of a pending proposal and pay other invoices with them.
+
+    The proposal is locked and must be pending. The invoice list must not be empty or repeat an
+    invoice, and every id must resolve under Row-Level Security, so an invoice of another tenant
+    is refused. Several transactions together with several invoices are not supported. The
+    proposal links are replaced by the chosen invoices, kind follows the new cardinality, and
+    the payments are recorded by _apply_proposal, which also refuses invoices that are not
+    payable or are in another currency. Everything runs in one transaction, so any refusal
+    leaves links, payments and state untouched. The proposal ends reassigned and the event
+    reconciliation.proposal_reassigned records the engine's invoice ids before and the chosen
+    ones after, with the kinds and the payments. No proposal_applied event is recorded. Score
+    and breakdown are not touched: they keep describing the engine's original pairing, not the
+    chosen one. An invoice linked to another pending proposal is refused, as runs treat it as
+    held. A chosen invoice may end up with no allocation when the transactions are used up
+    before it.
+
+    Args:
+        principal: Acting principal, who needs reconciliation:write and invoices:write or
+            PermissionDenied is raised.
+        proposal: Proposal to reassign, read again under lock.
+        invoices: Invoices the user chose, of which only the primary keys are used.
+
+    Returns:
+        The payments recorded, in transaction order.
+
+    Raises:
+        InvalidTransition: When the proposal is not pending. Errors of _apply_proposal
+            propagate for invoices that are not payable.
+        ValidationError: When the list is empty, repeats an invoice, would make a many to many
+            proposal, has an invoice held by another pending proposal, or has an invoice in
+            another currency than the payments.
+        Invoice.DoesNotExist: When an invoice is not visible to the current tenant.
+    """
+    require_permission(principal, Permission.RECONCILIATION_WRITE)
+    require_permission(principal, Permission.INVOICES_WRITE)
+    locked = MatchProposal.objects.select_for_update().get(pk=proposal.pk)
+    if locked.state != MatchProposal.State.PENDING:
+        raise InvalidTransition(f"the proposal is {locked.state}, it cannot be reassigned")
+    ids = [row.pk for row in invoices]
+    if not ids:
+        raise ValidationError("Choose at least one invoice.")
+    if len(set(ids)) != len(ids):
+        raise ValidationError("An invoice was chosen more than once.")
+    if Invoice.objects.filter(pk__in=ids).count() != len(ids):
+        raise Invoice.DoesNotExist("An invoice was not found.")
+    tx_count = MatchProposalTransaction.objects.filter(proposal=locked).count()
+    if tx_count > 1 and len(ids) > 1:
+        raise ValidationError("Several transactions cannot be matched to several invoices.")
+    if (
+        MatchProposalInvoice.objects.filter(
+            invoice_id__in=ids, proposal__state=MatchProposal.State.PENDING
+        )
+        .exclude(proposal=locked)
+        .exists()
+    ):
+        raise ValidationError("An invoice is already held by another pending proposal.")
+    engine = {
+        "kind": locked.kind,
+        "invoice_ids": _link_ids(MatchProposalInvoice, locked, "invoice_id"),
+    }
+    MatchProposalInvoice.objects.filter(proposal=locked).delete()
+    for invoice_id in ids:
+        MatchProposalInvoice.objects.create(proposal=locked, invoice_id=invoice_id)
+    locked.kind = (
+        MatchProposal.Kind.MANY_TO_ONE
+        if tx_count > 1
+        else MatchProposal.Kind.ONE_TO_ONE
+        if len(ids) == 1
+        else MatchProposal.Kind.ONE_TO_MANY
+    )
+    locked.save(update_fields=["kind"])
+    return _apply_proposal(principal, locked, reassigned_from=engine)

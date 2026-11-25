@@ -588,6 +588,9 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "reconciliation.services.create_import",
         "reconciliation.services.save_bank_account",
         "reconciliation.services.run_reconciliation",
+        "reconciliation.services.accept_proposal",
+        "reconciliation.services.reject_proposal",
+        "reconciliation.services.reassign_proposal",
     }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.
