@@ -10,7 +10,8 @@ demo:
 	docker compose up -d --build --wait
 	docker compose exec -T web python manage.py seed_demo
 
-# Regenerate the committed GraphQL schema (SDL); the final newline is added for pre-commit's end-of-file fixer. A test fails when it is stale, and CI compares it
-# with the base branch to refuse breaking changes.
+# Regenerate the committed GraphQL schema (SDL); the final newline is added for pre-commit's
+# end-of-file fixer. A test fails when it is stale, and CI compares it with the base branch to
+# refuse breaking changes.
 schema:
 	uv run python manage.py graphql_schema --out schema.graphql && echo >> schema.graphql
