@@ -627,7 +627,16 @@ def graphql_root_fields(graphql_schema: GraphQLSchema) -> list[str]:
     return sorted(f"{root.name}.{name}" for root in roots if root for name in root.fields)
 
 
-GRAPHQL_ISOLATION_CASES: frozenset[str] = frozenset({"Query.invoices"})
+GRAPHQL_ISOLATION_CASES: frozenset[str] = frozenset(
+    {
+        "Query.invoices",
+        "Query.customers",
+        "Query.products",
+        "Query.payments",
+        "Query.reconciliationRuns",
+        "Query.matchProposals",
+    }
+)
 """Query and Mutation fields that have isolation cases; add every new root field here.
 
 The cases are in test_graphql."""
