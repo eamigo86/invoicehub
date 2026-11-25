@@ -68,6 +68,25 @@ jobs:
       - run: uv run pytest --cov
       - name: Tenant isolation suite
         run: uv run pytest -m isolation
+      - name: Schema contract against the base
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && github.base_ref || '' }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+          elif [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            git fetch --no-tags --depth=1 origin "$BEFORE_SHA"
+          else
+            echo "No base revision to compare with; skipping the schema contract check."
+            exit 0
+          fi
+          if ! git cat-file -e FETCH_HEAD:schema.graphql; then
+            echo "The base has no schema.graphql yet; skipping the schema contract check."
+            exit 0
+          fi
+          git show FETCH_HEAD:schema.graphql > "$RUNNER_TEMP/base.graphql"
+          uv run python manage.py check_schema_contract --base "$RUNNER_TEMP/base.graphql"
 
   docker:
     runs-on: ubuntu-latest

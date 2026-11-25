@@ -1,0 +1,712 @@
+type Query {
+  """Invoice list"""
+  invoices(
+    """Filtering options for the list"""
+    filter: InvoiceFilterInput
+  ): InvoiceListType
+
+  """Customer list"""
+  customers(
+    """Filtering options for the list"""
+    filter: CustomerFilterInput
+  ): CustomerListType
+
+  """Product list"""
+  products(
+    """Filtering options for the list"""
+    filter: ProductFilterInput
+  ): ProductListType
+
+  """Payment list"""
+  payments(
+    """Filtering options for the list"""
+    filter: PaymentFilterInput
+  ): PaymentListType
+
+  """ReconciliationRun list"""
+  reconciliationRuns(
+    """Filtering options for the list"""
+    filter: ReconciliationRunFilterInput
+  ): ReconciliationRunListType
+
+  """MatchProposal list"""
+  matchProposals(
+    """Filtering options for the list"""
+    filter: MatchProposalFilterInput
+  ): MatchProposalListType
+}
+
+type InvoiceListType {
+  results(
+    """Number of results to return per page."""
+    first: Int
+
+    """Opaque cursor; returns the results that come after it in the ordering."""
+    cursor: String
+  ): [InvoiceType]
+  totalCount: Int
+
+  """Forward keyset pagination metadata."""
+  pageInfo(
+    """Number of results to return per page."""
+    first: Int
+
+    """Opaque cursor; returns the results that come after it in the ordering."""
+    cursor: String
+  ): CursorPageInfo
+}
+
+type InvoiceType {
+  id: UUID!
+  kind: billingInvoiceKindEnum
+  status: billingInvoiceStatusEnum
+  customer: CustomerType
+  currency: billingInvoiceCurrencyEnum
+  number: Int
+  year: Int
+  reference: String
+  issueDate: CustomDate
+  dueDate: CustomDate
+  notes: String
+  subtotal: BigInt
+  taxTotal: BigInt
+  total: BigInt
+  createdAt: CustomDateTime
+
+  """InvoiceLine list"""
+  lines: InvoiceLineListType
+
+  """PaymentAllocation list"""
+  allocations: PaymentAllocationListType
+}
+
+"""UUID scalar. Serializes as lowercase hyphenated string."""
+scalar UUID
+
+enum billingInvoiceKindEnum {
+  """Invoice"""
+  INVOICE
+
+  """Credit Note"""
+  CREDIT_NOTE
+}
+
+enum billingInvoiceStatusEnum {
+  """Draft"""
+  DRAFT
+
+  """Issued"""
+  ISSUED
+
+  """Sent"""
+  SENT
+
+  """Partially Paid"""
+  PARTIALLY_PAID
+
+  """Paid"""
+  PAID
+
+  """Voided"""
+  VOIDED
+}
+
+type CustomerType {
+  id: ID!
+  addressLine1: String
+  addressLine2: String
+  city: String
+  state: String
+  postalCode: String
+  country: String
+  name: String
+  taxId: String
+  emails: [String]
+}
+
+enum billingInvoiceCurrencyEnum {
+  """Usd"""
+  USD
+
+  """Cad"""
+  CAD
+
+  """Mxn"""
+  MXN
+}
+
+"""ISO 8601 date scalar (YYYY-MM-DD). Supports CustomDateFormat bypass."""
+scalar CustomDate
+
+"""Signed 64-bit integer serialized and parsed as a decimal string."""
+scalar BigInt
+
+"""ISO 8601 datetime scalar. Supports CustomDateFormat bypass."""
+scalar CustomDateTime
+
+type InvoiceLineListType {
+  results(
+    """
+    Number of results to return per page. Default 'default_limit': 50, and 'max_limit': 100
+    """
+    limit: Int = 50
+
+    """The initial index from which to return the results. Default: 0"""
+    offset: Int
+
+    """
+    A string or comma delimited string value that indicates the default ordering when obtaining lists of objects.
+    """
+    ordering: String
+  ): [InvoiceLineType]
+  totalCount: Int
+}
+
+type InvoiceLineType {
+  id: ID!
+  position: Int
+  description: String
+  quantity: Decimal
+  unitPrice: BigInt
+  discountBp: Int
+  net: BigInt
+  total: BigInt
+}
+
+"""Arbitrary-precision decimal scalar. Serializes as string."""
+scalar Decimal
+
+type PaymentAllocationListType {
+  results(
+    """
+    Number of results to return per page. Default 'default_limit': 50, and 'max_limit': 100
+    """
+    limit: Int = 50
+
+    """The initial index from which to return the results. Default: 0"""
+    offset: Int
+
+    """
+    A string or comma delimited string value that indicates the default ordering when obtaining lists of objects.
+    """
+    ordering: String
+  ): [PaymentAllocationType]
+  totalCount: Int
+}
+
+type PaymentAllocationType {
+  id: ID!
+  payment: PaymentType
+  amount: BigInt
+}
+
+type PaymentType {
+  id: ID!
+  amount: BigInt
+  currency: billingPaymentCurrencyEnum
+  valueDate: CustomDate
+  source: billingPaymentSourceEnum
+  reference: String
+  createdAt: CustomDateTime
+}
+
+enum billingPaymentCurrencyEnum {
+  """Usd"""
+  USD
+
+  """Cad"""
+  CAD
+
+  """Mxn"""
+  MXN
+}
+
+enum billingPaymentSourceEnum {
+  """Manual"""
+  MANUAL
+
+  """Bank"""
+  BANK
+}
+
+"""Forward keyset pagination metadata."""
+type CursorPageInfo {
+  """True if at least one row exists after the last row of the page."""
+  hasNextPage: Boolean!
+
+  """True if at least one row exists before the first row of the page."""
+  hasPreviousPage: Boolean!
+
+  """Cursor of the first row of the page (null if the page is empty)."""
+  startCursor: String
+
+  """Cursor of the last row of the page (null if the page is empty)."""
+  endCursor: String
+}
+
+input InvoiceFilterInput {
+  status: InvoiceStatusLookups
+  kind: InvoiceKindLookups
+  currency: InvoiceCurrencyLookups
+  number: InvoiceNumberLookups
+  issueDate: InvoiceIssueDateLookups
+  dueDate: InvoiceDueDateLookups
+  and: [InvoiceFilterInput]
+  or: [InvoiceFilterInput]
+  not: InvoiceFilterInput
+}
+
+input InvoiceStatusLookups {
+  exact: billingInvoiceStatusEnum
+  in: [billingInvoiceStatusEnum]
+}
+
+input InvoiceKindLookups {
+  exact: billingInvoiceKindEnum
+  in: [billingInvoiceKindEnum]
+}
+
+input InvoiceCurrencyLookups {
+  exact: billingInvoiceCurrencyEnum
+  in: [billingInvoiceCurrencyEnum]
+}
+
+input InvoiceNumberLookups {
+  exact: Int
+  gt: Int
+  gte: Int
+  lt: Int
+  lte: Int
+}
+
+input InvoiceIssueDateLookups {
+  exact: Date
+  gt: Date
+  gte: Date
+  lt: Date
+  lte: Date
+}
+
+"""ISO 8601 date scalar (YYYY-MM-DD) for filter-input lookups."""
+scalar Date
+
+input InvoiceDueDateLookups {
+  exact: Date
+  gt: Date
+  gte: Date
+  lt: Date
+  lte: Date
+}
+
+type CustomerListType {
+  results(
+    """Number of results to return per page."""
+    first: Int
+
+    """Opaque cursor; returns the results that come after it in the ordering."""
+    cursor: String
+  ): [CustomerType]
+  totalCount: Int
+
+  """Forward keyset pagination metadata."""
+  pageInfo(
+    """Number of results to return per page."""
+    first: Int
+
+    """Opaque cursor; returns the results that come after it in the ordering."""
+    cursor: String
+  ): CursorPageInfo
+}
+
+input CustomerFilterInput {
+  name: CustomerNameLookups
+  taxId: CustomerTaxIdLookups
+  and: [CustomerFilterInput]
+  or: [CustomerFilterInput]
+  not: CustomerFilterInput
+}
+
+input CustomerNameLookups {
+  exact: String
+  icontains: String
+}
+
+input CustomerTaxIdLookups {
+  exact: String
+}
+
+type ProductListType {
+  results(
+    """Number of results to return per page."""
+    first: Int
+
+    """Opaque cursor; returns the results that come after it in the ordering."""
+    cursor: String
+  ): [ProductType]
+  totalCount: Int
+
+  """Forward keyset pagination metadata."""
+  pageInfo(
+    """Number of results to return per page."""
+    first: Int
+
+    """Opaque cursor; returns the results that come after it in the ordering."""
+    cursor: String
+  ): CursorPageInfo
+}
+
+type ProductType {
+  id: ID!
+  name: String
+  description: String
+  unitPrice: BigInt
+}
+
+input ProductFilterInput {
+  name: ProductNameLookups
+  and: [ProductFilterInput]
+  or: [ProductFilterInput]
+  not: ProductFilterInput
+}
+
+input ProductNameLookups {
+  exact: String
+  icontains: String
+}
+
+type PaymentListType {
+  results(
+    """Number of results to return per page."""
+    first: Int
+
+    """Opaque cursor; returns the results that come after it in the ordering."""
+    cursor: String
+  ): [PaymentType]
+  totalCount: Int
+
+  """Forward keyset pagination metadata."""
+  pageInfo(
+    """Number of results to return per page."""
+    first: Int
+
+    """Opaque cursor; returns the results that come after it in the ordering."""
+    cursor: String
+  ): CursorPageInfo
+}
+
+input PaymentFilterInput {
+  currency: PaymentCurrencyLookups
+  source: PaymentSourceLookups
+  valueDate: PaymentValueDateLookups
+  and: [PaymentFilterInput]
+  or: [PaymentFilterInput]
+  not: PaymentFilterInput
+}
+
+input PaymentCurrencyLookups {
+  exact: billingPaymentCurrencyEnum
+  in: [billingPaymentCurrencyEnum]
+}
+
+input PaymentSourceLookups {
+  exact: billingPaymentSourceEnum
+  in: [billingPaymentSourceEnum]
+}
+
+input PaymentValueDateLookups {
+  exact: Date
+  gt: Date
+  gte: Date
+  lt: Date
+  lte: Date
+}
+
+type ReconciliationRunListType {
+  results(
+    """Number of results to return per page."""
+    first: Int
+
+    """Opaque cursor; returns the results that come after it in the ordering."""
+    cursor: String
+  ): [ReconciliationRunType]
+  totalCount: Int
+
+  """Forward keyset pagination metadata."""
+  pageInfo(
+    """Number of results to return per page."""
+    first: Int
+
+    """Opaque cursor; returns the results that come after it in the ordering."""
+    cursor: String
+  ): CursorPageInfo
+}
+
+type ReconciliationRunType {
+  id: UUID!
+  status: reconciliationReconciliationrunStatusEnum
+  transactionsConsidered: Int
+  invoicesConsidered: Int
+  autoCount: Int
+  appliedCount: Int
+  suggestedCount: Int
+  ambiguousCount: Int
+  unmatchedTransactions: Int
+  unmatchedInvoices: Int
+  durationMs: Int
+  error: String
+  createdAt: CustomDateTime
+  completedAt: CustomDateTime
+}
+
+enum reconciliationReconciliationrunStatusEnum {
+  """Pending"""
+  PENDING
+
+  """Completed"""
+  COMPLETED
+
+  """Failed"""
+  FAILED
+}
+
+input ReconciliationRunFilterInput {
+  status: ReconciliationRunStatusLookups
+  and: [ReconciliationRunFilterInput]
+  or: [ReconciliationRunFilterInput]
+  not: ReconciliationRunFilterInput
+}
+
+input ReconciliationRunStatusLookups {
+  exact: reconciliationReconciliationrunStatusEnum
+  in: [reconciliationReconciliationrunStatusEnum]
+}
+
+type MatchProposalListType {
+  results(
+    """Number of results to return per page."""
+    first: Int
+
+    """Opaque cursor; returns the results that come after it in the ordering."""
+    cursor: String
+  ): [MatchProposalType]
+  totalCount: Int
+
+  """Forward keyset pagination metadata."""
+  pageInfo(
+    """Number of results to return per page."""
+    first: Int
+
+    """Opaque cursor; returns the results that come after it in the ordering."""
+    cursor: String
+  ): CursorPageInfo
+}
+
+type MatchProposalType {
+  id: UUID!
+  kind: reconciliationMatchproposalKindEnum
+  engineStatus: reconciliationMatchproposalEngineStatusEnum
+  score: Float
+  residual: BigInt
+  state: reconciliationMatchproposalStateEnum
+  decidedAt: CustomDateTime
+  createdAt: CustomDateTime
+}
+
+enum reconciliationMatchproposalKindEnum {
+  """One To One"""
+  ONE_TO_ONE
+
+  """One To Many"""
+  ONE_TO_MANY
+
+  """Many To One"""
+  N_1
+}
+
+enum reconciliationMatchproposalEngineStatusEnum {
+  """Auto"""
+  AUTO
+
+  """Suggested"""
+  SUGGESTED
+
+  """Ambiguous"""
+  AMBIGUOUS
+}
+
+enum reconciliationMatchproposalStateEnum {
+  """Pending"""
+  PENDING
+
+  """Applied"""
+  APPLIED
+
+  """Rejected"""
+  REJECTED
+
+  """Reassigned"""
+  REASSIGNED
+
+  """Undone"""
+  UNDONE
+}
+
+input MatchProposalFilterInput {
+  kind: MatchProposalKindLookups
+  engineStatus: MatchProposalEngineStatusLookups
+  state: MatchProposalStateLookups
+  and: [MatchProposalFilterInput]
+  or: [MatchProposalFilterInput]
+  not: MatchProposalFilterInput
+}
+
+input MatchProposalKindLookups {
+  exact: reconciliationMatchproposalKindEnum
+  in: [reconciliationMatchproposalKindEnum]
+}
+
+input MatchProposalEngineStatusLookups {
+  exact: reconciliationMatchproposalEngineStatusEnum
+  in: [reconciliationMatchproposalEngineStatusEnum]
+}
+
+input MatchProposalStateLookups {
+  exact: reconciliationMatchproposalStateEnum
+  in: [reconciliationMatchproposalStateEnum]
+}
+
+type Mutation {
+  """The customer that was saved, or the reasons it was not."""
+  saveCustomer(input: CustomerInput!): SaveCustomerPayload
+
+  """The draft invoice that was saved, or the reasons it was not."""
+  saveDraft(input: DraftInvoiceInput!): SaveDraftPayload
+
+  """The id of the draft that was deleted, or the reasons it was not."""
+  deleteDraft(id: ID!): DeleteDraftPayload
+
+  """The invoice that was issued, or the reasons it was not."""
+  issueInvoice(id: ID!): IssueInvoicePayload
+
+  """The invoice whose email was requested, or the reasons it was not."""
+  sendInvoice(input: SendInvoiceInput!): SendInvoicePayload
+
+  """The credit note that was drafted, or the reasons it was not."""
+  draftCreditNote(input: CreditNoteInput!): DraftCreditNotePayload
+
+  """The proposal after it was accepted, or the reasons it was not."""
+  acceptMatch(id: ID!): AcceptMatchPayload
+
+  """The proposal after it was rejected, or the reasons it was not."""
+  rejectMatch(id: ID!): RejectMatchPayload
+}
+
+type SaveCustomerPayload {
+  errors: [DomainError!]!
+  customer: CustomerType
+}
+
+"""A typed failure reported in a mutation payload."""
+type DomainError {
+  code: ErrorCode!
+  message: String!
+
+  """Path of the input value at fault, when there is one."""
+  field: String
+}
+
+"""Kind of mutation failure."""
+enum ErrorCode {
+  VALIDATION_ERROR
+  INVALID_TRANSITION
+  PERMISSION_DENIED
+  NOT_FOUND
+}
+
+"""
+The fields of a customer; with an id they replace those of the customer.
+"""
+input CustomerInput {
+  id: ID = null
+  name: String!
+  taxId: String = ""
+  emails: [String!] = []
+  addressLine1: String = ""
+  addressLine2: String = ""
+  city: String = ""
+  state: String = ""
+  postalCode: String = ""
+  country: String = "US"
+}
+
+type SaveDraftPayload {
+  errors: [DomainError!]!
+  invoice: InvoiceType
+}
+
+"A draft invoice and its lines; with an id they replace those of the draft.\n\nOmitting the currency keeps the current one, or uses the default of the tenant for a new\ndraft.\n"
+input DraftInvoiceInput {
+  id: ID = null
+  customerId: ID!
+  currency: String = null
+  dueDate: CustomDate = null
+  notes: String = ""
+  lines: [DraftLineInput!]!
+}
+
+"""
+One line of a draft; money is in integer cents and the quantity has up to 3 decimals.
+"""
+input DraftLineInput {
+  description: String!
+  quantity: Decimal!
+  unitPrice: BigInt!
+  discountBp: Int = 0
+  productId: ID = null
+  taxRateIds: [ID!] = []
+}
+
+type DeleteDraftPayload {
+  errors: [DomainError!]!
+  id: ID
+}
+
+type IssueInvoicePayload {
+  errors: [DomainError!]!
+  invoice: InvoiceType
+}
+
+type SendInvoicePayload {
+  errors: [DomainError!]!
+  invoice: InvoiceType
+}
+
+"A request to email an issued invoice; repeating the key never sends a second email.\n\nWithout recipients the email goes to the addresses frozen on the invoice.\n"
+input SendInvoiceInput {
+  id: ID!
+  idempotencyKey: String!
+  recipients: [String!] = null
+}
+
+type DraftCreditNotePayload {
+  errors: [DomainError!]!
+  creditNote: InvoiceType
+}
+
+"""
+A credit note for an issued invoice; without lines it credits the whole invoice.
+"""
+input CreditNoteInput {
+  invoiceId: ID!
+  lines: [DraftLineInput!] = null
+}
+
+type AcceptMatchPayload {
+  errors: [DomainError!]!
+  proposal: MatchProposalType
+}
+
+type RejectMatchPayload {
+  errors: [DomainError!]!
+  proposal: MatchProposalType
+}
