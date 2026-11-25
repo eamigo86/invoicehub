@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ invoice.reference }}</title>
+<style>
+  @page { size: Letter; margin: 18mm 16mm; }
+  body { font-family: "DejaVu Sans", sans-serif; font-size: 10pt; color: #1f2937; }
+  h1 { font-size: 20pt; margin: 0 0 4mm; }
+  .meta, .parties { width: 100%; margin-bottom: 8mm; border-collapse: collapse; }
+  .parties td { width: 50%; vertical-align: top; padding-right: 6mm; }
+  .label { color: #6b7280; font-size: 8pt; text-transform: uppercase; }
+  table.lines, table.totals { width: 100%; border-collapse: collapse; margin-bottom: 6mm; }
+  table.lines th { text-align: left; border-bottom: 1px solid #1f2937; padding: 2mm 1mm; }
+  table.lines td { border-bottom: 1px solid #e5e7eb; padding: 2mm 1mm; }
+  .num { text-align: right; }
+  table.totals { width: 55%; margin-left: 45%; }
+  table.totals td { padding: 1mm; }
+  table.totals tr.grand td { border-top: 1px solid #1f2937; font-weight: bold; }
+  .notes { white-space: pre-line; margin-top: 6mm; }
+</style>
+</head>
+<body>
+  <h1>{% if is_credit_note %}Credit note{% else %}Invoice{% endif %} {{ invoice.reference }}</h1>
+  <table class="meta">
+    <tr>
+      <td><span class="label">Issue date</span><br>{{ invoice.issue_date|date:"Y-m-d" }}</td>
+      <td><span class="label">Due date</span><br>{{ invoice.due_date|date:"Y-m-d" }}</td>
+      {% if is_credit_note %}
+      <td><span class="label">Corrects invoice</span><br>{{ original_reference }}</td>
+      {% endif %}
+    </tr>
+  </table>
+  <table class="parties">
+    <tr>
+      <td>
+        <span class="label">From</span><br>
+        <strong>{{ invoice.issuer.legal_name }}</strong><br>
+        {% if invoice.issuer.ein %}EIN {{ invoice.issuer.ein }}<br>{% endif %}
+        {{ invoice.issuer.address_line1 }}<br>
+        {% if invoice.issuer.address_line2 %}{{ invoice.issuer.address_line2 }}<br>{% endif %}
+        {{ invoice.issuer.city }}, {{ invoice.issuer.state }} {{ invoice.issuer.postal_code }}<br>
+        {{ invoice.issuer.country }}
+      </td>
+      <td>
+        <span class="label">Bill to</span><br>
+        <strong>{{ invoice.customer_details.name }}</strong><br>
+        {% if invoice.customer_details.tax_id %}Tax ID {{ invoice.customer_details.tax_id }}<br>{% endif %}
+        {{ invoice.customer_details.address_line1 }}<br>
+        {% if invoice.customer_details.address_line2 %}{{ invoice.customer_details.address_line2 }}<br>{% endif %}
+        {{ invoice.customer_details.city }}, {{ invoice.customer_details.state }} {{ invoice.customer_details.postal_code }}<br>
+        {{ invoice.customer_details.country }}
+      </td>
+    </tr>
+  </table>
+  <table class="lines">
+    <thead>
+      <tr>
+        <th>Description</th><th class="num">Qty</th><th class="num">Unit price</th>
+        <th class="num">Discount</th><th class="num">Net</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lines %}
+      <tr>
+        <td>{{ line.description }}</td><td class="num">{{ line.quantity }}</td>
+        <td class="num">{{ line.unit_price }}</td><td class="num">{{ line.discount }}</td>
+        <td class="num">{{ line.net }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <table class="totals">
+    <tr><td>Subtotal</td><td class="num">{{ subtotal }}</td></tr>
+    {% for row in breakdown %}
+    <tr><td>{{ row.label }} on {{ row.basis }}</td><td class="num">{{ row.amount }}</td></tr>
+    {% endfor %}
+    <tr><td>Tax total</td><td class="num">{{ tax_total }}</td></tr>
+    <tr class="grand"><td>Total</td><td class="num">{{ total }}</td></tr>
+  </table>
+  {% if invoice.notes %}<p class="notes">{{ invoice.notes }}</p>{% endif %}
+</body>
+</html>

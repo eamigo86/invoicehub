@@ -282,6 +282,23 @@ def test_the_status_of_an_issued_invoice_can_change(world: World) -> None:
         assert Invoice.objects.get(pk=world.issued.pk).status == Invoice.Status.SENT
 
 
+def test_the_pdf_can_be_set_once_and_never_cleared_or_replaced(world: World) -> None:
+    """An issued invoice accepts its PDF once; clearing or replacing it is refused.
+
+    Args:
+        world: Committed tenant with issued and draft invoices.
+    """
+    pk = world.issued.pk
+    with tenant_context(world.tenant.pk):
+        Invoice.objects.filter(pk=pk).update(pdf="a.pdf")
+        assert Invoice.objects.get(pk=pk).pdf.name == "a.pdf"
+    refused(world, lambda: Invoice.objects.filter(pk=pk).update(pdf=""))
+    refused(world, lambda: Invoice.objects.filter(pk=pk).update(pdf="b.pdf"))
+    refused(world, lambda: Invoice.objects.filter(pk=pk).update(pdf="a.pdf", notes="x"))
+    with tenant_context(world.tenant.pk):
+        assert Invoice.objects.get(pk=pk).pdf.name == "a.pdf"
+
+
 def test_a_draft_stays_fully_editable(world: World) -> None:
     """Saving a draft again replaces its lines, and a draft can be deleted.
 

@@ -26,3 +26,6 @@ odd/
 static/css/app.css
 .atl/
 .hypothesis/
+
+# Local uploaded files (invoice PDFs)
+media/

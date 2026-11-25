@@ -504,6 +504,8 @@ def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
     transaction. When the credits are below the total but payments cover the rest, so nothing
     is owed any more, the original becomes paid and invoice.paid is recorded instead.
 
+    Once the transaction commits, the task render_invoice_pdf is enqueued to render the PDF.
+
     Args:
         principal: Acting principal, who needs invoices:write or PermissionDenied is raised.
         invoice: Draft invoice to issue.
@@ -607,6 +609,10 @@ def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
             {"status": before_status},
             {"status": original.status},
         )
+    # Imported here because the task module imports this one.
+    from billing.tasks import render_invoice_pdf
+
+    transaction.on_commit(lambda: render_invoice_pdf.delay(str(stored.tenant_id), str(stored.pk)))
     return stored
 
 

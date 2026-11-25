@@ -433,5 +433,7 @@ def project_task_names(celery_app: Celery) -> list[str]:
     return sorted(name for name in celery_app.tasks if not name.startswith("celery."))
 
 
-TASK_ISOLATION_CASES: frozenset[str] = frozenset()
-"""Names of the Celery tasks that have isolation cases; add every new task here."""
+TASK_ISOLATION_CASES: frozenset[str] = frozenset({"billing.tasks.render_invoice_pdf"})
+"""Names of the Celery tasks that have isolation cases; add every new task here.
+
+The cases are in test_tasks."""
