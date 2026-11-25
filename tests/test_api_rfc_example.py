@@ -44,6 +44,7 @@ def test_the_rfc_example_with_a_full_page_stays_within_the_limits() -> None:
     """The largest page the API serves is still accepted for the documented shape."""
     token = make_world("A", ["invoices:read"])
     query = documented_query().replace("first: 50", "first: 100")
+    assert "first: 100" in query, "the RFC page size changed: update this test"
     assert "results" in data(query, token)["invoices"]
 
 

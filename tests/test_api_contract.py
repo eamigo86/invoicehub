@@ -5,8 +5,9 @@ from pathlib import Path
 
 import pytest
 from django.core.management import CommandError, call_command
+from graphql import BreakingChangeType, build_schema
 
-from api.contract import breaking_changes, dangerous_changes
+from api.contract import _was_deprecated, breaking_changes, dangerous_changes
 
 OLD = """
 type Query {
@@ -81,6 +82,20 @@ def test_removing_a_live_argument_is_breaking() -> None:
     assert result == ["Argument Query.loud(other:) was removed."]
 
 
+def test_an_unparseable_removal_is_not_forgiven() -> None:
+    """A description the regexes cannot read fails closed instead of being allowed."""
+    old = build_schema(OLD)
+    assert not _was_deprecated(old, BreakingChangeType.ARG_REMOVED, "Argument gone.")
+    assert not _was_deprecated(old, BreakingChangeType.FIELD_REMOVED, "Field gone.")
+    assert not _was_deprecated(old, BreakingChangeType.VALUE_REMOVED_FROM_ENUM, "Value gone.")
+
+
+def test_a_required_argument_added_to_an_existing_field_is_breaking() -> None:
+    """Clients that omit a new required argument stop working."""
+    result = breaking_changes(OLD, edit(("count: Int", "count(page: Int!): Int")))
+    assert result == ["A required argument Query.count(page:) was added."]
+
+
 def test_a_type_change_is_always_breaking() -> None:
     """Changing a field type fails even though the field was kept."""
     result = breaking_changes(OLD, edit(("count: Int", "count: String")))
@@ -92,7 +107,7 @@ def test_removing_a_type_is_breaking() -> None:
     result = breaking_changes(
         OLD, edit(("  status: Status\n", ""), ("enum Status {", "enum Other {"))
     )
-    assert "Status was removed." in result
+    assert result == ["Status was removed.", "Field Query.status was removed."]
 
 
 def test_additions_are_not_breaking_but_enum_additions_are_dangerous() -> None:
