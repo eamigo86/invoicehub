@@ -105,6 +105,28 @@ jobs:
       - run: make demo
       - name: Rerunning reports the finished demo without seeding again
         run: make demo
+      # The shop example runs on the runner against the published port, with a token that
+      # issue_api_token mints inside the web container for the demo user.
+      - name: The shop example invoices two orders through GraphQL
+        run: |
+          token=$(docker compose exec -T web python manage.py issue_api_token \
+            --user demo@example.com --tenant "Demo Company" \
+            --scope invoices:read --scope invoices:write --name shop-ci)
+          echo "::add-mask::$token"
+          export INVOICEHUB_API_TOKEN="$token"
+          first=$(python3 examples/shop_integration/shop.py)
+          second=$(python3 examples/shop_integration/shop.py)
+          echo "$first"
+          echo "$second"
+          pattern='^Issued invoice INV-[0-9]{4}-[0-9]{5} for .*, total [0-9]+\.[0-9]{2} [A-Z]{3}$'
+          echo "$first" | grep -Eq "$pattern"
+          echo "$second" | grep -Eq "$pattern"
+          [ "$first" != "$second" ] || { echo "the rerun issued no new invoice"; exit 1; }
+          count=$(curl -fsS "${INVOICEHUB_GRAPHQL_URL:-http://localhost:8010/graphql/}" \
+            -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+            -d '{"query":"{ customers(filter: {taxId: {exact: \"12-3456789\"}}) { totalCount } }"}' \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["data"]["customers"]["totalCount"])')
+          [ "$count" = 1 ] || { echo "expected one shop customer, found $count"; exit 1; }
       - name: Service logs
         if: failure()
         run: docker compose logs --no-color
