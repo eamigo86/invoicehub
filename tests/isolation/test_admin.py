@@ -117,7 +117,7 @@ class Scenario:
         name = f"admin:{opts.app_label}_{opts.model_name}_{kind}"
         return reverse(name, args=[row.pk] if row else [])
 
-    def hostile_data(self) -> dict[str, str]:
+    def hostile_data(self) -> dict[str, str | list[str]]:
         """Build a valid change form POST for A's row that hijacks one designated text field.
 
         The data starts from what the admin's own change form renders for the row, so it is
@@ -133,10 +133,12 @@ class Scenario:
         session["tenant_id"] = str(self.a.pk)
         session.save()
         form = reader.get(self.url("change", self.a_row)).context["adminform"].form
-        data: dict[str, str] = {}
+        data: dict[str, str | list[str]] = {}
         for name in form.fields:
             value = form[name].value()
-            if value is True:
+            if isinstance(value, list):
+                data[name] = [str(v) for v in value]
+            elif value is True:
                 data[name] = "on"
             elif value is not None and value is not False:
                 data[name] = str(value)

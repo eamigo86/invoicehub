@@ -7,10 +7,15 @@ Cross-tenant references are refused by validation: full_clean checks a foreign k
 related model's base manager, which Row-Level Security limits to the current tenant, so a row of
 another tenant raises ValidationError.
 """
+# ponytail: writes that bypass the services are not checked; composite (tenant_id, id) foreign
+# keys would enforce it in the database.
+
+from collections.abc import Iterable
 
 from django.core.exceptions import PermissionDenied
+from django.db import transaction
 
-from billing.models import Customer, TaxRate
+from billing.models import Customer, Product, ProductTaxRate, TaxRate
 from tenancy.context import require_current_tenant_id
 from tenancy.models import Tenant, TenantModel
 from tenancy.permissions import Permission, Principal, require_permission
@@ -120,3 +125,46 @@ def delete_tax_rate(principal: Principal | None, tax_rate: TaxRate) -> None:
     """
     require_permission(principal, Permission.SETTINGS_MANAGE)
     tax_rate.delete()
+
+
+@transaction.atomic
+def save_product(
+    principal: Principal | None,
+    product: Product,
+    default_taxes: Iterable[TaxRate] | None = None,
+) -> Product:
+    """Create or update a product, optionally replacing its default taxes.
+
+    Everything is validated, so ValidationError is raised for invalid data, including a tax
+    rate of another tenant, and then nothing is stored.
+
+    Args:
+        principal: Acting principal, who needs invoices:write or PermissionDenied is raised.
+        product: Product to persist.
+        default_taxes: Tax rates the product should link to, replacing the current links, or
+            None to leave them alone.
+
+    Returns:
+        The saved product.
+    """
+    require_permission(principal, Permission.INVOICES_WRITE)
+    _clean(product)
+    product.save()
+    if default_taxes is not None:
+        ProductTaxRate.objects.filter(product=product).delete()
+        for rate in dict.fromkeys(default_taxes):
+            link = ProductTaxRate(product=product, tax_rate=rate)
+            _clean(link)
+            link.save()
+    return product
+
+
+def delete_product(principal: Principal | None, product: Product) -> None:
+    """Delete a product together with its default tax links.
+
+    Args:
+        principal: Acting principal, who needs invoices:write or PermissionDenied is raised.
+        product: Product to remove.
+    """
+    require_permission(principal, Permission.INVOICES_WRITE)
+    product.delete()

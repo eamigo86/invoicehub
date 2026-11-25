@@ -1,13 +1,15 @@
 """Billing services never act across tenants, whatever the principal holds."""
 
 import pytest
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 
-from billing.models import Customer, TaxRate
+from billing.models import Customer, Product, ProductTaxRate, TaxRate
 from billing.services import (
     delete_customer,
+    delete_product,
     delete_tax_rate,
     save_customer,
+    save_product,
     save_tax_rate,
     update_issuer,
 )
@@ -190,3 +192,100 @@ def test_a_principal_of_a_cannot_delete_a_tax_rate_while_b_is_current(
         with pytest.raises(PermissionDenied):
             delete_tax_rate(owner_of(a), rate)
         assert TaxRate.objects.filter(pk=rate.pk).exists()
+
+
+def test_b_cannot_link_a_tax_rate_of_a_to_a_product(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, a product linked to A's tax rate is refused and nothing is stored.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        rate = save_tax_rate(owner_of(a), TaxRate(name="Austin", rate_bp=825))
+    with tenant_context(b.pk):
+        with pytest.raises(ValidationError):
+            save_product(owner_of(b), Product(name="Widget", unit_price=1), [rate])
+        assert (Product.objects.count(), ProductTaxRate.objects.count()) == (0, 0)
+
+
+def test_a_refused_foreign_tax_rate_leaves_the_existing_links_alone(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """Replacing taxes with a foreign rate fails as a whole and keeps the previous links.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        foreign = save_tax_rate(owner_of(a), TaxRate(name="Austin", rate_bp=825))
+    with tenant_context(b.pk):
+        own = save_tax_rate(owner_of(b), TaxRate(name="Dallas", rate_bp=100))
+        product = save_product(owner_of(b), Product(name="Widget", unit_price=1), [own])
+        with pytest.raises(ValidationError):
+            save_product(owner_of(b), product, [foreign])
+        assert list(product.default_taxes.values_list("name", flat=True)) == ["Dallas"]
+
+
+def test_b_cannot_modify_a_product_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, saving A's product is refused and A's row keeps its name.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        product = save_product(owner_of(a), Product(name="Widget", unit_price=1))
+    product.name = "Hacked"
+    with tenant_context(b.pk), pytest.raises(TenantMismatch):
+        save_product(owner_of(b), product)
+    with tenant_context(a.pk):
+        assert Product.objects.get(pk=product.pk).name == "Widget"
+
+
+def test_b_cannot_delete_a_product_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, deleting A's product is a no-op, because Row-Level Security hides the row.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        product = save_product(owner_of(a), Product(name="Widget", unit_price=1))
+    pk = product.pk
+    with tenant_context(b.pk):
+        delete_product(owner_of(b), product)
+    with tenant_context(a.pk):
+        assert Product.objects.filter(pk=pk).exists()
+
+
+def test_a_principal_of_a_cannot_save_a_product_while_b_is_current(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """A principal of A holding invoices:write is refused under B and nothing is stored.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(b.pk):
+        with pytest.raises(PermissionDenied):
+            save_product(owner_of(a), Product(name="Widget", unit_price=1))
+        assert Product.objects.count() == 0
+
+
+def test_a_principal_of_a_cannot_delete_a_product_while_b_is_current(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """A principal of A cannot delete B's product while B is current.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(b.pk):
+        product = save_product(owner_of(b), Product(name="Widget", unit_price=1))
+        with pytest.raises(PermissionDenied):
+            delete_product(owner_of(a), product)
+        assert Product.objects.filter(pk=product.pk).exists()

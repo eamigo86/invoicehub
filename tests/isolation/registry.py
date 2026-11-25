@@ -10,6 +10,7 @@ import inspect
 import pkgutil
 import uuid
 from collections.abc import Callable, Sequence
+from typing import Any
 
 from celery import Celery
 from django.apps import apps
@@ -17,7 +18,7 @@ from django.apps.registry import Apps
 from django.db import models
 from django.urls import URLPattern, URLResolver
 
-from billing.models import Customer, TaxRate
+from billing.models import Customer, Product, ProductTaxRate, TaxRate
 from tenancy.models import ApiToken, Membership, Tenant, TenantModel
 
 
@@ -41,15 +42,62 @@ def make_tax_rate() -> TenantModel:
     return tax_rate
 
 
+def make_product() -> TenantModel:
+    """Create one product for the active tenant.
+
+    Returns:
+        The saved product.
+    """
+    product: TenantModel = Product.objects.create(
+        name=f"product-{uuid.uuid4().hex[:8]}", unit_price=100
+    )
+    return product
+
+
+def make_product_tax_rate() -> TenantModel:
+    """Create one product with one tax rate, linked, for the active tenant.
+
+    Returns:
+        The saved link.
+    """
+    link: TenantModel = ProductTaxRate.objects.create(
+        product=make_product(), tax_rate=make_tax_rate()
+    )
+    return link
+
+
 FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {
     Customer: make_customer,
     TaxRate: make_tax_rate,
+    Product: make_product,
+    ProductTaxRate: make_product_tax_rate,
 }
 
-ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {Customer: "name", TaxRate: "name"}
+ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {
+    Customer: "name",
+    TaxRate: "name",
+    Product: "name",
+}
 """Plain text field of each model's admin form that the isolation tests overwrite with a marker.
 
 Every other form value comes from the admin's own change form, so the POST stays valid."""
+
+
+def clone_values(model: type[TenantModel]) -> dict[str, Any]:
+    """Pick column values that let a second row of the active tenant coexist with a factory row.
+
+    Tests that copy a row use them so that unique constraints are not violated. A model with a
+    marker text field gets a fresh text; a link model gets another row to point at.
+
+    Args:
+        model: Tenant model under test.
+
+    Returns:
+        Column names mapped to the values that replace the copied ones.
+    """
+    if model is ProductTaxRate:
+        return {"tax_rate_id": make_tax_rate().pk}
+    return {ADMIN_MARKER_FIELDS.get(model, "name"): f"clone-{uuid.uuid4().hex}"}
 
 
 def concrete_tenant_models() -> list[type[TenantModel]]:
@@ -221,6 +269,8 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.services.update_issuer",
         "billing.services.save_tax_rate",
         "billing.services.delete_tax_rate",
+        "billing.services.save_product",
+        "billing.services.delete_product",
     }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.
