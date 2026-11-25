@@ -2,12 +2,22 @@
 
 import os
 import sys
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from hypothesis import settings
+
+from accounts.models import User
+from billing.models import Customer
+from reconciliation.models import BankAccount
+from tenancy.context import tenant_context
+from tenancy.models import Tenant
+from tenancy.permissions import Permission, Principal
+from tests.test_payments import make_tenant
+from tests.test_reconciliation_models import make_account
 
 # WeasyPrint falls back to ctypes.util.find_library, which reads this variable at call time.
 # uv strips DYLD_* variables when it starts Python on macOS, so Homebrew's Pango is set here.
@@ -100,3 +110,69 @@ def enqueued_reconcile(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     delay = MagicMock()
     monkeypatch.setattr(reconcile_run, "delay", delay)
     return delay
+
+
+@pytest.fixture
+def tenant() -> Generator[Tenant]:
+    """Create a tenant with issuer details and make it the active one.
+
+    Yields:
+        The tenant.
+    """
+    tenant = make_tenant()
+    with tenant_context(tenant.pk):
+        yield tenant
+
+
+@pytest.fixture
+def user() -> User:
+    """Create the user behind the writer principal.
+
+    Returns:
+        The user.
+    """
+    return User.objects.create_user("ann", "ann@example.com", "pw")
+
+
+@pytest.fixture
+def writer(tenant: Tenant, user: User) -> Principal:
+    """Build a principal that may write invoices and reconciliation data.
+
+    Args:
+        tenant: Active tenant.
+        user: User the principal stands for.
+
+    Returns:
+        The principal.
+    """
+    permissions = frozenset(
+        {Permission.INVOICES_READ, Permission.INVOICES_WRITE, Permission.RECONCILIATION_WRITE}
+    )
+    return Principal(tenant.pk, permissions, user_id=user.pk)
+
+
+@pytest.fixture
+def customer(tenant: Tenant) -> Customer:
+    """Create a customer in the active tenant.
+
+    Args:
+        tenant: Active tenant.
+
+    Returns:
+        The customer.
+    """
+    created: Customer = Customer.objects.create(name="Bolt")
+    return created
+
+
+@pytest.fixture
+def account(tenant: Tenant) -> BankAccount:
+    """Create a bank account in the active tenant.
+
+    Args:
+        tenant: Active tenant.
+
+    Returns:
+        The account.
+    """
+    return make_account()

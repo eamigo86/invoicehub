@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from django.core import mail
 
-from billing.models import AuditEvent, Customer, Invoice, InvoiceEmail
+from billing.models import AuditEvent, Customer, Invoice, InvoiceEmail, Payment
 from billing.services import DraftLine, issue_invoice, save_draft, send_invoice
 from billing.tasks import render_invoice_pdf, send_invoice_email
 from reconciliation.models import (
@@ -171,3 +171,58 @@ def test_a_run_of_a_never_considers_the_rows_of_b() -> None:
         assert proposal.invoices.get().tenant_id == a.pk
     with tenant_context(b.pk):
         assert not MatchProposal.objects.exists()
+
+
+def test_a_run_of_b_applies_only_the_rows_of_b() -> None:
+    """B's auto match is applied; A's transaction gets no payment and A's invoice is untouched."""
+    tenants = [
+        Tenant.objects.create(
+            name=name,
+            legal_name=f"{name} Inc.",
+            address_line1="1 Main St",
+            city="Austin",
+            state="TX",
+            postal_code="78701",
+        )
+        for name in ("A", "B")
+    ]
+    a, b = tenants
+    for tenant in tenants:
+        principal = Principal(tenant.pk, frozenset(Permission))
+        with tenant_context(tenant.pk):
+            customer = Customer.objects.create(name="Client")
+            draft = save_draft(
+                principal, Invoice(customer=customer), [DraftLine("L", Decimal(1), 100)]
+            )
+            invoice = issue_invoice(principal, draft)
+            row = create_import(
+                principal,
+                BankAccount.objects.create(
+                    name="Chase",
+                    account_identifier="1234",
+                    date_column="Date",
+                    amount_column="Amount",
+                    description_column="Memo",
+                    payer_column="Payer",
+                ),
+                (
+                    "Date,Amount,Memo,Payer\n"
+                    f"{invoice.issue_date:%m/%d/%Y},1.00,{invoice.reference},Client\n"
+                ).encode(),
+            )
+            import_statement(str(tenant.pk), str(row.pk))
+    with tenant_context(b.pk):
+        run = run_reconciliation(Principal(b.pk, frozenset(Permission)))
+    reconcile_run(str(b.pk), str(run.pk))
+    with tenant_context(b.pk):
+        stored = ReconciliationRun.objects.get(pk=run.pk)
+        assert (stored.transactions_considered, stored.invoices_considered) == (1, 1)
+        assert stored.applied_count == 1
+        assert BankTransaction.objects.get().payment is not None
+        assert Invoice.objects.get().status == Invoice.Status.PAID
+        assert MatchProposal.objects.get().state == MatchProposal.State.APPLIED
+    with tenant_context(a.pk):
+        assert BankTransaction.objects.get().payment is None
+        assert Invoice.objects.get().status == Invoice.Status.ISSUED
+        assert not MatchProposal.objects.exists()
+        assert not Payment.objects.exists()
