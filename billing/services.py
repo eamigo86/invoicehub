@@ -52,6 +52,8 @@ def update_issuer(principal: Principal | None, tenant: Tenant) -> Tenant:
 def save_customer(principal: Principal | None, customer: Customer) -> Customer:
     """Create or update a customer for the current tenant.
 
+    The customer is validated first, so ValidationError is raised for invalid data.
+
     Args:
         principal: Acting principal, who needs invoices:write or PermissionDenied is raised.
         customer: Customer to persist.
@@ -60,6 +62,7 @@ def save_customer(principal: Principal | None, customer: Customer) -> Customer:
         The saved customer.
     """
     require_permission(principal, Permission.INVOICES_WRITE)
+    customer.full_clean(exclude=["tenant"])
     customer.save()
     return customer
 

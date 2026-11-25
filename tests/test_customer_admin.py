@@ -166,8 +166,8 @@ def test_admin_writes_leave_no_log_entries(client: Client, tenant: Tenant) -> No
     with tenant_context(tenant.pk):
         acme, bolt = Customer.objects.get(name="Acme"), Customer.objects.get(name="Bolt")
     login(client, tenant.pk)
-    client.post(f"{LIST_URL}add/", {"name": "Cora", "tax_id": "", "email": ""})
-    client.post(f"{LIST_URL}{acme.pk}/change/", {"name": "Acme 2", "tax_id": "", "email": ""})
+    client.post(f"{LIST_URL}add/", {"name": "Cora", "country": "US"})
+    client.post(f"{LIST_URL}{acme.pk}/change/", {"name": "Acme 2", "country": "US"})
     client.post(f"{LIST_URL}{acme.pk}/delete/", {"post": "yes"})
     data = {"action": "delete_selected", "_selected_action": [str(bolt.pk)], "post": "yes"}
     client.post(LIST_URL, data)
@@ -201,7 +201,7 @@ def test_add_goes_through_the_save_service(
         calls: Recorded service calls.
     """
     login(client, tenant.pk)
-    client.post("/admin/billing/customer/add/", {"name": "Cora", "tax_id": "", "email": ""})
+    client.post("/admin/billing/customer/add/", {"name": "Cora", "country": "US"})
     assert calls == [("save", "Cora")]
     with tenant_context(tenant.pk):
         assert Customer.objects.filter(name="Cora").exists()
@@ -241,3 +241,20 @@ def test_bulk_delete_goes_through_the_delete_service(
     assert sorted(calls) == [("delete", "Acme"), ("delete", "Bolt")]
     with tenant_context(tenant.pk):
         assert Customer.objects.count() == 0
+
+
+def test_admin_saves_several_emails_and_searches_by_them(client: Client, tenant: Tenant) -> None:
+    """The emails field takes a comma separated list, and the changelist search finds it.
+
+    Args:
+        client: Django test client fixture.
+        tenant: Tenant owning customers.
+    """
+    login(client, tenant.pk)
+    data = {"name": "Cora", "emails": "ap@cora.example, boss@cora.example", "country": "US"}
+    client.post(f"{LIST_URL}add/", data)
+    with tenant_context(tenant.pk):
+        assert Customer.objects.get(name="Cora").emails == ["ap@cora.example", "boss@cora.example"]
+    body = client.get(LIST_URL, {"q": "boss@cora"}).content.decode()
+    assert "Cora" in body
+    assert "Acme" not in body

@@ -33,6 +33,11 @@ def make_customer() -> TenantModel:
 
 FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {Customer: make_customer}
 
+ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {Customer: "name"}
+"""Plain text field of each model's admin form that the isolation tests overwrite with a marker.
+
+Every other form value comes from the admin's own change form, so the POST stays valid."""
+
 
 def concrete_tenant_models() -> list[type[TenantModel]]:
     """List the installed concrete tenant models.
