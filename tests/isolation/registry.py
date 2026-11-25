@@ -581,6 +581,7 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.services.list_customers",
         "billing.services.list_products",
         "billing.services.list_payments",
+        "billing.services.list_tax_rates",
         "billing.services.save_customer",
         "billing.services.delete_customer",
         "billing.services.update_issuer",
@@ -635,6 +636,9 @@ GRAPHQL_ISOLATION_CASES: frozenset[str] = frozenset(
         "Query.payments",
         "Query.reconciliationRuns",
         "Query.matchProposals",
+        "Mutation.saveCustomer",
+        "Mutation.saveDraft",
+        "Mutation.deleteDraft",
     }
 )
 """Query and Mutation fields that have isolation cases; add every new root field here.

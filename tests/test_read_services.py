@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 from django.core.exceptions import PermissionDenied
 
-from billing.models import Customer, Product
-from billing.services import list_customers, list_payments, list_products
+from billing.models import Customer, Product, TaxRate
+from billing.services import list_customers, list_payments, list_products, list_tax_rates
 from reconciliation.services import list_match_proposals, list_reconciliation_runs
 from tenancy.models import Tenant
 from tenancy.permissions import Permission, Principal
@@ -20,6 +20,7 @@ READ_SERVICES: list[Callable[[Principal | None], Any]] = [
     list_customers,
     list_products,
     list_payments,
+    list_tax_rates,
     list_reconciliation_runs,
     list_match_proposals,
 ]
@@ -57,9 +58,11 @@ def test_the_read_services_return_the_rows_of_the_tenant(
     writer = Principal(tenant.pk, frozenset({Permission.INVOICES_WRITE}))
     product = Product.objects.create(name="Widget", unit_price=500)
     payment = pay(writer, [(issued_invoice(writer, customer), 1000)])
+    rate = TaxRate.objects.create(name="Austin", rate_bp=825)
     proposal = propose("1-1", [], [])
     assert list(list_customers(reader)) == [customer]
     assert list(list_products(reader)) == [product]
     assert list(list_payments(reader)) == [payment]
+    assert list(list_tax_rates(reader)) == [rate]
     assert list(list_reconciliation_runs(reader)) == [proposal.run]
     assert list(list_match_proposals(reader)) == [proposal]

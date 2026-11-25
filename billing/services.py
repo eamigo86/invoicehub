@@ -117,6 +117,21 @@ def list_payments(principal: Principal | None) -> QuerySet[Payment]:
     return Payment.objects.all()
 
 
+def list_tax_rates(principal: Principal | None) -> QuerySet[TaxRate]:
+    """Return the tax rates the principal may read in the current tenant.
+
+    Row-Level Security and the tenant manager scope the rows; this adds the permission check.
+
+    Args:
+        principal: Acting principal, who needs invoices:read or PermissionDenied is raised.
+
+    Returns:
+        A queryset of the tax rates of the current tenant.
+    """
+    require_permission(principal, Permission.INVOICES_READ)
+    return TaxRate.objects.all()
+
+
 def update_issuer(principal: Principal | None, tenant: Tenant) -> Tenant:
     """Validate and save the issuer details of the current tenant.
 
