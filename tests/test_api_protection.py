@@ -3,6 +3,7 @@
 from typing import Any
 
 import pytest
+from django.core.cache import cache
 from django_graphex.settings import graphql_api_settings
 from django_graphex.views import GraphQLView
 
@@ -246,3 +247,143 @@ def test_requests_without_a_token_are_401_and_not_counted(
     """
     settings.GRAPHQL_RATE_LIMIT_PER_MINUTE = 1
     assert [post(QUERY).status_code for _ in range(3)] == [401, 401, 401]
+    redis_client = cache._cache.get_client()  # type: ignore[attr-defined]
+    assert not redis_client.keys("*graphql-rate*")
+
+
+def test_a_cache_outage_lets_the_request_through_with_a_warning(
+    settings: Any,
+    clock: list[float],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When the cache is down the limiter fails open, logs the error type and never the token.
+
+    Args:
+        settings: Pytest-django settings fixture.
+        clock: Frozen clock of the limiter.
+        monkeypatch: Pytest monkeypatch fixture.
+        caplog: Pytest log capture fixture.
+    """
+
+    def down(*args: object, **kwargs: object) -> None:
+        raise ConnectionError("redis is down")
+
+    settings.GRAPHQL_RATE_LIMIT_PER_MINUTE = 1
+    _, token = make_world("A", ["invoices:read"])
+    monkeypatch.setattr(cache, "add", down)
+    with caplog.at_level("WARNING", logger="api.ratelimit"):
+        assert [post(QUERY, token).status_code for _ in range(2)] == [200, 200]
+    assert "ConnectionError" in caplog.text
+    assert token not in caplog.text
+
+
+def test_a_key_evicted_between_add_and_incr_counts_as_a_first_request(
+    settings: Any, clock: list[float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An evicted counter restarts the window instead of failing the request.
+
+    Args:
+        settings: Pytest-django settings fixture.
+        clock: Frozen clock of the limiter.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+
+    def evicted(key: str, delta: int = 1) -> int:
+        raise ValueError(f"Key '{key}' not found")
+
+    settings.GRAPHQL_RATE_LIMIT_PER_MINUTE = 1
+    _, token = make_world("A", ["invoices:read"])
+    monkeypatch.setattr(cache, "incr", evicted)
+    assert post(QUERY, token).status_code == 200
+
+
+def test_retry_after_is_rounded_up(settings: Any, clock: list[float]) -> None:
+    """A fraction of a second left in the window is reported as a whole second.
+
+    Args:
+        settings: Pytest-django settings fixture.
+        clock: Frozen clock of the limiter.
+    """
+    settings.GRAPHQL_RATE_LIMIT_PER_MINUTE = 1
+    _, token = make_world("A", ["invoices:read"])
+    clock[0] += 10.4
+    post(QUERY, token)
+    assert post(QUERY, token)["Retry-After"] == "50"
+
+
+def test_the_cache_guard_refuses_the_broker_database(settings: Any) -> None:
+    """Clearing the cache must never flush the Celery broker database.
+
+    Args:
+        settings: Pytest-django settings fixture.
+    """
+    from tests.conftest import assert_cache_is_not_the_broker
+
+    assert_cache_is_not_the_broker()
+    settings.CACHES = {
+        "default": {**settings.CACHES["default"], "LOCATION": settings.CELERY_BROKER_URL}
+    }
+    with pytest.raises(pytest.fail.Exception, match="broker"):
+        assert_cache_is_not_the_broker()
+
+
+def introspect(query: str, token: str, method: str) -> Any:
+    """Send an introspection query by POST or GET.
+
+    Args:
+        query: GraphQL document.
+        token: Plaintext API token.
+        method: Either post or get.
+
+    Returns:
+        The decoded JSON body.
+    """
+    from django.test import Client
+
+    from tests.test_api_graphql import URL
+
+    if method == "post":
+        return post(query, token).json()
+    response = Client().get(URL, {"query": query}, headers={"Authorization": f"Bearer {token}"})
+    return response.json()
+
+
+INTROSPECTION_FORMS = [
+    pytest.param(INTROSPECTION, "post", id="schema"),
+    pytest.param('{ __type(name: "Query") { name } }', "post", id="type"),
+    pytest.param("{ s: __schema { queryType { name } } }", "post", id="aliased"),
+    pytest.param(
+        "{ ...F } fragment F on Query { __schema { queryType { name } } }", "post", id="fragment"
+    ),
+    pytest.param(INTROSPECTION, "get", id="get"),
+]
+
+
+@pytest.mark.parametrize(("query", "method"), INTROSPECTION_FORMS)
+def test_every_introspection_form_is_refused_for_an_ordinary_token(query: str, method: str) -> None:
+    """Field, type, alias, fragment and GET forms are all refused outside DEBUG.
+
+    Args:
+        query: Introspection document.
+        method: HTTP method used to send it.
+    """
+    _, token = make_world("A", ["invoices:read"])
+    body = introspect(query, token, method)
+    assert body["errors"][0]["extensions"]["code"] == "INTROSPECTION_DISABLED"
+
+
+@pytest.mark.parametrize(("query", "method"), INTROSPECTION_FORMS)
+def test_every_introspection_form_is_allowed_for_a_development_token(
+    query: str, method: str
+) -> None:
+    """The same documents succeed for a development token.
+
+    Args:
+        query: Introspection document.
+        method: HTTP method used to send it.
+    """
+    tenant, _ = make_world("A", ["invoices:read"])
+    body = introspect(query, dev_token(tenant), method)
+    assert "errors" not in body
+    assert body["data"]

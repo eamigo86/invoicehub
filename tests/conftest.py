@@ -178,6 +178,20 @@ def account(tenant: Tenant) -> BankAccount:
     return make_account()
 
 
+def assert_cache_is_not_the_broker() -> None:
+    """Fail loudly when the Django cache points at the Celery broker.
+
+    Clearing the cache flushes its whole Redis database, so it must never be the broker one.
+    """
+    from django.conf import settings
+
+    location = settings.CACHES["default"]["LOCATION"]
+    if location == settings.CELERY_BROKER_URL:
+        pytest.fail(
+            f"CACHE_URL equals CELERY_BROKER_URL ({location}); clearing would flush the broker"
+        )
+
+
 @pytest.fixture(autouse=True)
 def clean_cache() -> Generator[None]:
     """Empty the Django cache around each test, so rate limit counters never leak.
@@ -187,6 +201,7 @@ def clean_cache() -> Generator[None]:
     """
     from django.core.cache import cache
 
+    assert_cache_is_not_the_broker()
     cache.clear()
     yield
     cache.clear()
