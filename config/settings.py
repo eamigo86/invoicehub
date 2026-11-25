@@ -136,4 +136,11 @@ DJANGO_GRAPHEX = {
     "SCHEMA": "api.schema.schema",
     "DEFAULT_PAGE_SIZE": 50,
     "MAX_PAGE_SIZE": 100,
+    # Depth: the deepest path of the schema is five levels (invoices, results, allocations,
+    # results, payment), so 6 leaves one level of slack. Cost: graphex charges a list wrapper
+    # and its results page both, so the RFC overdue-invoices query (a page of 50 with customer,
+    # lines and allocations) is rated 51,015,101; the budget is about twice that, and aliasing
+    # that shape even twice is refused.
+    "MAX_QUERY_DEPTH": 6,
+    "MAX_QUERY_COST": 100_000_000,
 }
