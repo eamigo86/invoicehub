@@ -35,6 +35,7 @@ from billing.services import (
     list_invoices,
     list_payments,
     list_products,
+    list_tax_rates,
     record_event,
     record_payment,
     reverse_payment,
@@ -1047,10 +1048,10 @@ def test_a_principal_of_a_cannot_list_invoices_while_b_is_current(
         list_invoices(owner_of(a))
 
 
-def test_b_cannot_list_the_customers_products_and_payments_of_a(
+def test_b_cannot_list_the_customers_products_payments_and_tax_rates_of_a(
     tenants: tuple[Tenant, Tenant],
 ) -> None:
-    """Under each tenant, the catalog and payment read services return only its own rows.
+    """Under each tenant, the catalog, tax rate and payment read services return only its own rows.
 
     Args:
         tenants: Tenants A and B.
@@ -1065,6 +1066,7 @@ def test_b_cannot_list_the_customers_products_and_payments_of_a(
             rows[tenant.pk] = (
                 customer,
                 Product.objects.create(name=f"{tenant.name} product", unit_price=100),
+                TaxRate.objects.create(name=f"{tenant.name} tax", rate_bp=100),
                 record_payment(
                     owner_of(tenant),
                     Payment(amount=1000, currency=Currency.USD, value_date=date(2026, 6, 15)),
@@ -1072,10 +1074,11 @@ def test_b_cannot_list_the_customers_products_and_payments_of_a(
                 ),
             )
     for tenant in (a, b):
-        customer, product, payment = rows[tenant.pk]
+        customer, product, rate, payment = rows[tenant.pk]
         with tenant_context(tenant.pk):
             assert list(list_customers(owner_of(tenant))) == [customer]
             assert list(list_products(owner_of(tenant))) == [product]
+            assert list(list_tax_rates(owner_of(tenant))) == [rate]
             assert list(list_payments(owner_of(tenant))) == [payment]
 
 
