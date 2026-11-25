@@ -98,7 +98,7 @@ connect as the migrator; `FORCE ROW LEVEL SECURITY` keeps the tenant policies ap
 
 ### Checks and tests on the host
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.13, with the Compose stack running.
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.13, with the Compose stack running, and Pango for the invoice PDFs (WeasyPrint): `brew install pango` on macOS, or `libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0` on Debian and Ubuntu.
 
 ```bash
 cp .env.example .env             # connects as invoicehub_migrator on localhost:5442

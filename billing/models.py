@@ -168,6 +168,19 @@ class AuditEvent(TenantModel):
         return f"{self.action} on {self.entity} {self.entity_id}"
 
 
+def invoice_pdf_path(instance: "Invoice", filename: str) -> str:
+    """Build the storage path of the PDF of an invoice.
+
+    Args:
+        instance: Invoice the PDF belongs to.
+        filename: Name of the uploaded file, which is ignored.
+
+    Returns:
+        The path tenants/<tenant_id>/invoices/<id>.pdf.
+    """
+    return f"tenants/{instance.tenant_id}/invoices/{instance.pk}.pdf"
+
+
 class Invoice(TenantModel):
     """An invoice or credit note, drafted and then issued; issued invoices are immutable.
 
@@ -192,6 +205,7 @@ class Invoice(TenantModel):
         issue_date: Day the invoice was issued, set when issuing.
         due_date: Day payment is due, set when issuing.
         notes: Free text shown on the document.
+        pdf: Rendered PDF of the issued document, written once and never regenerated.
         subtotal: Sum of the line nets, in cents.
         tax_total: Sum of every line tax, in cents.
         total: Subtotal plus tax total, in cents.
@@ -240,6 +254,7 @@ class Invoice(TenantModel):
     issue_date = models.DateField(null=True, blank=True)
     due_date = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True)
+    pdf = models.FileField(upload_to=invoice_pdf_path, blank=True, max_length=200)
     subtotal = models.BigIntegerField(default=0)
     tax_total = models.BigIntegerField(default=0)
     total = models.BigIntegerField(default=0)
