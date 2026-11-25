@@ -178,6 +178,14 @@ class Invoice(TenantModel):
         status: Lifecycle state of the document.
         customer: Who is invoiced.
         currency: Currency of every amount on the document.
+        series: Numbering series the invoice was numbered from, set when issuing.
+        number: Position in the series within the year, set when issuing.
+        year: Year of the numbering, set when issuing.
+        reference: Display number such as INV-2026-00001, stored when issuing so that a later
+            prefix change never alters it.
+        issuer: Frozen copy of the issuer details, taken when issuing.
+        customer_details: Frozen copy of the customer details, taken when issuing.
+        issued_at: Moment the invoice was issued.
         issue_date: Day the invoice was issued, set when issuing.
         due_date: Day payment is due, set when issuing.
         notes: Free text shown on the document.
@@ -211,6 +219,15 @@ class Invoice(TenantModel):
     status = models.CharField(max_length=14, choices=Status, default=Status.DRAFT)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
     currency = models.CharField(max_length=3, choices=Currency)
+    series = models.ForeignKey(
+        "InvoiceSeries", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    number = models.PositiveIntegerField(null=True, blank=True)
+    year = models.PositiveSmallIntegerField(null=True, blank=True)
+    reference = models.CharField(max_length=40, blank=True)
+    issuer = models.JSONField(null=True, blank=True, encoder=DjangoJSONEncoder)
+    customer_details = models.JSONField(null=True, blank=True, encoder=DjangoJSONEncoder)
+    issued_at = models.DateTimeField(null=True, blank=True)
     issue_date = models.DateField(null=True, blank=True)
     due_date = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True)
@@ -220,6 +237,15 @@ class Invoice(TenantModel):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        """Model options."""
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "series", "year", "number"], name="invoice_tenant_number_uniq"
+            )
+        ]
+
     def __str__(self) -> str:
         """Describe the invoice by customer and status.
 
@@ -227,6 +253,43 @@ class Invoice(TenantModel):
             A label such as Acme draft invoice.
         """
         return f"{self.customer} {self.status} {self.kind}"
+
+
+class InvoiceSeries(TenantModel):
+    """The gap-free numbering counter of one kind of document within a tenant.
+
+    Issuing locks the row, hands out next_number and increments it in the same transaction, and
+    the counter restarts at 1 when the issue year is later than year.
+
+    Attributes:
+        kind: Kind of document the series numbers; a tenant has one series per kind.
+        prefix: Text that starts the reference, for example INV- or CN-.
+        year: Year the counter currently runs in.
+        next_number: Number the next issued document receives.
+    """
+
+    kind = models.CharField(max_length=12, choices=Invoice.Kind)
+    prefix = models.CharField(max_length=20)
+    year = models.PositiveSmallIntegerField()
+    next_number = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        """Model options."""
+
+        verbose_name_plural = "invoice series"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "kind"], name="invoiceseries_tenant_kind_uniq"
+            )
+        ]
+
+    def __str__(self) -> str:
+        """Describe the series by prefix and kind.
+
+        Returns:
+            A label such as INV- (invoice).
+        """
+        return f"{self.prefix} ({self.kind})"
 
 
 class InvoiceLine(TenantModel):

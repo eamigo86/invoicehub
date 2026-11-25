@@ -11,6 +11,7 @@ from billing.models import (
     Customer,
     Invoice,
     InvoiceLine,
+    InvoiceSeries,
     Product,
     ProductTaxRate,
     TaxRate,
@@ -21,6 +22,7 @@ from billing.services import (
     delete_draft,
     delete_product,
     delete_tax_rate,
+    issue_invoice,
     record_event,
     save_customer,
     save_draft,
@@ -456,3 +458,91 @@ def test_a_principal_of_a_cannot_delete_a_draft_while_b_is_current(
         with pytest.raises(PermissionDenied):
             delete_draft(owner_of(a), draft)
         assert Invoice.objects.filter(pk=draft.pk).exists()
+
+
+def complete_issuer(*tenants: Tenant) -> None:
+    """Fill in the issuer details that issuing an invoice requires.
+
+    Args:
+        *tenants: Tenants to complete.
+    """
+    for tenant in tenants:
+        Tenant.objects.filter(pk=tenant.pk).update(
+            legal_name=f"{tenant.name} Inc.",
+            address_line1="1 Main St",
+            city="Austin",
+            state="TX",
+            postal_code="78701",
+        )
+
+
+def test_b_cannot_issue_a_draft_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, issuing A's draft finds no row and A's draft stays a draft, unnumbered.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    complete_issuer(a, b)
+    with tenant_context(a.pk):
+        customer = save_customer(owner_of(a), Customer(name="Acme"))
+        draft = save_draft(
+            owner_of(a), Invoice(customer=customer), [DraftLine("Old", Decimal(1), 5)]
+        )
+    with tenant_context(b.pk), pytest.raises(Invoice.DoesNotExist):
+        issue_invoice(owner_of(b), draft)
+    with tenant_context(b.pk):
+        assert (Invoice.objects.count(), InvoiceSeries.objects.count()) == (0, 0)
+    with tenant_context(a.pk):
+        stored = Invoice.objects.get(pk=draft.pk)
+        assert (stored.status, stored.number) == (Invoice.Status.DRAFT, None)
+        assert not InvoiceSeries.objects.exists()
+
+
+def test_a_principal_of_a_cannot_issue_while_b_is_current(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """A principal of A is refused under B and B's draft is not numbered.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    complete_issuer(a, b)
+    with tenant_context(b.pk):
+        customer = save_customer(owner_of(b), Customer(name="Bolt"))
+        draft = save_draft(
+            owner_of(b), Invoice(customer=customer), [DraftLine("Old", Decimal(1), 5)]
+        )
+        with pytest.raises(PermissionDenied):
+            issue_invoice(owner_of(a), draft)
+        assert Invoice.objects.get().status == Invoice.Status.DRAFT
+        assert not InvoiceSeries.objects.exists()
+
+
+def test_the_series_counters_of_two_tenants_are_independent(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """B's issues never move A's series counter, and each tenant numbers from 1.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    complete_issuer(a, b)
+    numbers: dict[str, list[int | None]] = {}
+    for tenant, count in ((a, 1), (b, 3)):
+        with tenant_context(tenant.pk):
+            customer = save_customer(owner_of(tenant), Customer(name="Client"))
+            drafts = [
+                save_draft(
+                    owner_of(tenant), Invoice(customer=customer), [DraftLine("L", Decimal(1), 5)]
+                )
+                for _ in range(count)
+            ]
+            numbers[tenant.name] = [issue_invoice(owner_of(tenant), d).number for d in drafts]
+    assert numbers == {"A": [1], "B": [1, 2, 3]}
+    with tenant_context(a.pk):
+        assert InvoiceSeries.objects.get().next_number == 2
+    with tenant_context(b.pk):
+        assert InvoiceSeries.objects.get().next_number == 4
