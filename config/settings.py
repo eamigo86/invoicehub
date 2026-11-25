@@ -45,12 +45,14 @@ INSTALLED_APPS = [
     "django.contrib.postgres",  # ArrayField of tenancy.ApiToken
     "allauth",
     "allauth.account",
+    "django_graphex",
     "core",
     "tenancy",
     "accounts",
     "billing",
     "reconciliation",
     "assistant",
+    "api",
 ]
 
 AUTH_USER_MODEL = "accounts.User"
@@ -128,4 +130,10 @@ UNFOLD = {
     "SITE_HEADER": "InvoiceHub",
     "SITE_URL": "/tenants/",
     "SITE_DROPDOWN": [{"icon": "swap_horiz", "title": "Switch tenant", "link": "/tenants/"}],
+}
+
+DJANGO_GRAPHEX = {
+    "SCHEMA": "api.schema.schema",
+    "DEFAULT_PAGE_SIZE": 50,
+    "MAX_PAGE_SIZE": 100,
 }

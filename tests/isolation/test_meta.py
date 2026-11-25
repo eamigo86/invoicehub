@@ -9,17 +9,20 @@ from django.db import connection, models
 from django.http import HttpRequest, HttpResponse
 from django.test.utils import isolate_apps
 from django.urls import URLPattern, URLResolver, include, path
+from graphql import build_schema
 
 from tenancy.admin import TenantModelAdmin
 from tenancy.models import Tenant, TenantModel
 from tenancy.operations import POLICY, POLICY_QUAL
 from tests.isolation.registry import (
     FACTORIES,
+    GRAPHQL_ISOLATION_CASES,
     SERVICE_ISOLATION_CASES,
     TASK_ISOLATION_CASES,
     TENANT_FK_ALLOWLIST,
     URL_ISOLATION_CASES,
     concrete_tenant_models,
+    graphql_root_fields,
     non_tenant_models,
     project_service_functions,
     project_task_names,
@@ -256,3 +259,28 @@ def test_task_discovery_reports_project_tasks_and_excludes_celery_builtins() -> 
     assert example is not None
     assert any(name.startswith("celery.") for name in scratch.tasks)
     assert project_task_names(scratch) == ["billing.tasks.example"]
+
+
+def test_every_graphql_root_field_has_isolation_cases() -> None:
+    """A Query or Mutation field added without listing it in the registry fails here."""
+    from api.schema import schema
+
+    fields = graphql_root_fields(schema.graphql_schema)
+    assert fields, "no GraphQL root field found, the check would be vacuous"
+    assert sorted(set(fields) - GRAPHQL_ISOLATION_CASES) == []
+
+
+def test_graphql_discovery_walks_query_and_mutation_and_skips_other_types() -> None:
+    """Root fields of Query and Mutation are reported, subscriptions and nested fields are not."""
+    sdl = """
+    type Query { invoices: Invoice, ping: Int }
+    type Mutation { issue: Invoice }
+    type Subscription { progress: Int }
+    type Invoice { total: Int }
+    """
+    assert graphql_root_fields(build_schema(sdl)) == [
+        "Mutation.issue",
+        "Query.invoices",
+        "Query.ping",
+    ]
+    assert graphql_root_fields(build_schema("type Query { ping: Int }")) == ["Query.ping"]

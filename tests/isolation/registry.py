@@ -19,6 +19,7 @@ from django.apps.registry import Apps
 from django.core.files.base import ContentFile
 from django.db import models
 from django.urls import URLPattern, URLResolver
+from graphql import GraphQLSchema
 
 from billing.models import (
     AuditEvent,
@@ -521,10 +522,11 @@ def project_url_names(
     return names
 
 
-URL_ISOLATION_CASES: frozenset[str] = frozenset({"tenancy:list", "tenancy:select"})
+URL_ISOLATION_CASES: frozenset[str] = frozenset({"tenancy:list", "tenancy:select", "api:graphql"})
 """Names of the project URLs that have isolation cases; add every new project URL name here.
 
-The cases for the tenancy URLs are in test_tenant_selection."""
+The cases for the tenancy URLs are in test_tenant_selection, those of api:graphql in
+test_graphql."""
 
 
 def project_service_functions(
@@ -575,6 +577,7 @@ def service_functions(module_name: str) -> list[str]:
 
 SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
     {
+        "billing.services.list_invoices",
         "billing.services.save_customer",
         "billing.services.delete_customer",
         "billing.services.update_issuer",
@@ -604,6 +607,25 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
 """Dotted names of the service functions that have isolation cases; add every new one here.
 
 The cases are in test_services."""
+
+
+def graphql_root_fields(graphql_schema: GraphQLSchema) -> list[str]:
+    """List the fields of the Query and Mutation root types of a schema.
+
+    Args:
+        graphql_schema: Schema to walk, such as the graphql_schema of the project schema.
+
+    Returns:
+        The names in the form Query.invoices, ordered. Subscription fields are left out.
+    """
+    roots = (graphql_schema.query_type, graphql_schema.mutation_type)
+    return sorted(f"{root.name}.{name}" for root in roots if root for name in root.fields)
+
+
+GRAPHQL_ISOLATION_CASES: frozenset[str] = frozenset({"Query.invoices"})
+"""Query and Mutation fields that have isolation cases; add every new root field here.
+
+The cases are in test_graphql."""
 
 
 def project_task_names(celery_app: Celery) -> list[str]:

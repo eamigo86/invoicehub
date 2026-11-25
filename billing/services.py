@@ -20,6 +20,7 @@ from typing import Any
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
+from django.db.models import QuerySet
 from django.utils import timezone
 
 from billing.calculations import LineInput, TaxRateInput, invoice_totals
@@ -54,6 +55,21 @@ ISSUER_FIELDS = [
     "timezone",
 ]
 """Tenant columns that update_issuer may write."""
+
+
+def list_invoices(principal: Principal | None) -> QuerySet[Invoice]:
+    """Return the invoices the principal may read in the current tenant.
+
+    Row-Level Security and the tenant manager scope the rows; this adds the permission check.
+
+    Args:
+        principal: Acting principal, who needs invoices:read or PermissionDenied is raised.
+
+    Returns:
+        A queryset of the invoices of the current tenant.
+    """
+    require_permission(principal, Permission.INVOICES_READ)
+    return Invoice.objects.all()
 
 
 def update_issuer(principal: Principal | None, tenant: Tenant) -> Tenant:
