@@ -94,7 +94,7 @@ def make_invoice() -> Invoice:
 
 def test_engine_version() -> None:
     """The wrapper reports the pinned remitmatch version."""
-    assert engine.engine_version() == "0.1.0a1"
+    assert engine.engine_version() == "0.1.0a2"
 
 
 def test_default_config_matches_match_config_defaults() -> None:
