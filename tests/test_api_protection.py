@@ -112,3 +112,104 @@ def test_introspection_is_open_in_debug(settings: Any) -> None:
     settings.DEBUG = True
     _, token = make_world("A", ["invoices:read"])
     assert "errors" not in post(INTROSPECTION, token).json()
+
+
+QUERY = "{ invoices { totalCount } }"
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Freeze the clock of the rate limiter, at the start of a minute.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+
+    Returns:
+        A one item list holding the current time, which a test may change.
+    """
+    now = [1_800_000_000.0 - 1_800_000_000.0 % 60]
+    monkeypatch.setattr("api.ratelimit.time", lambda: now[0])
+    return now
+
+
+def test_the_cache_is_redis() -> None:
+    """The rate limit counters live in Redis, shared by every web process."""
+    from django.conf import settings
+
+    assert settings.CACHES["default"]["BACKEND"] == "django.core.cache.backends.redis.RedisCache"
+
+
+def test_a_token_over_its_limit_gets_429_with_retry_after(
+    settings: Any, clock: list[float]
+) -> None:
+    """The request after the limit is refused with JSON and the seconds until the window ends.
+
+    Args:
+        settings: Pytest-django settings fixture.
+        clock: Frozen clock of the limiter.
+    """
+    settings.GRAPHQL_RATE_LIMIT_PER_MINUTE = 3
+    _, token = make_world("A", ["invoices:read"])
+    clock[0] += 45
+    assert [post(QUERY, token).status_code for _ in range(3)] == [200, 200, 200]
+    response = post(QUERY, token)
+    assert response.status_code == 429
+    assert response["Retry-After"] == "15"
+    assert response["Content-Type"] == "application/json"
+    assert "detail" in response.json()
+
+
+def test_the_refusal_comes_before_the_query_runs(settings: Any, clock: list[float]) -> None:
+    """A malformed document is answered 429, so nothing was parsed or executed.
+
+    Args:
+        settings: Pytest-django settings fixture.
+        clock: Frozen clock of the limiter.
+    """
+    settings.GRAPHQL_RATE_LIMIT_PER_MINUTE = 1
+    _, token = make_world("A", ["invoices:read"])
+    post(QUERY, token)
+    assert post("{ not valid", token).status_code == 429
+
+
+def test_the_counter_starts_over_in_the_next_window(settings: Any, clock: list[float]) -> None:
+    """A minute later the same token may call again.
+
+    Args:
+        settings: Pytest-django settings fixture.
+        clock: Frozen clock of the limiter.
+    """
+    settings.GRAPHQL_RATE_LIMIT_PER_MINUTE = 1
+    _, token = make_world("A", ["invoices:read"])
+    assert post(QUERY, token).status_code == 200
+    assert post(QUERY, token).status_code == 429
+    clock[0] += 60
+    assert post(QUERY, token).status_code == 200
+
+
+def test_tokens_are_counted_apart(settings: Any, clock: list[float]) -> None:
+    """One token running out does not slow another, even in the same tenant.
+
+    Args:
+        settings: Pytest-django settings fixture.
+        clock: Frozen clock of the limiter.
+    """
+    settings.GRAPHQL_RATE_LIMIT_PER_MINUTE = 1
+    tenant, first = make_world("A", ["invoices:read"])
+    second = dev_token(tenant)
+    assert post(QUERY, first).status_code == 200
+    assert post(QUERY, first).status_code == 429
+    assert post(QUERY, second).status_code == 200
+
+
+def test_requests_without_a_token_are_401_and_not_counted(
+    settings: Any, clock: list[float]
+) -> None:
+    """The 401 stays, and anonymous traffic never reaches a counter.
+
+    Args:
+        settings: Pytest-django settings fixture.
+        clock: Frozen clock of the limiter.
+    """
+    settings.GRAPHQL_RATE_LIMIT_PER_MINUTE = 1
+    assert [post(QUERY).status_code for _ in range(3)] == [401, 401, 401]

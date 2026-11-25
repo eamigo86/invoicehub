@@ -31,6 +31,15 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 CELERY_BROKER_URL: str = env("CELERY_BROKER_URL", default="redis://localhost:6390/0")
 
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        # A different Redis database than the Celery broker.
+        "LOCATION": env("CACHE_URL", default="redis://localhost:6390/1"),
+    }
+}
+GRAPHQL_RATE_LIMIT_PER_MINUTE: int = env.int("GRAPHQL_RATE_LIMIT_PER_MINUTE", default=600)
+
 MAILERS = build_mailers(env("EMAIL_URL", default="consolemail://"))
 DEFAULT_FROM_EMAIL: str = env("DEFAULT_FROM_EMAIL", default="InvoiceHub <no-reply@localhost>")
 

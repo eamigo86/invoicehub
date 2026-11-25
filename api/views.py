@@ -8,6 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django_graphex.security import DisableIntrospectionMiddleware
 from django_graphex.views import GraphQLView
 
+from api.ratelimit import retry_after
 from api.schema import schema
 from tenancy.permissions import request_principal
 
@@ -48,12 +49,18 @@ def graphql(request: HttpRequest) -> HttpResponse:
         request: Incoming request.
 
     Returns:
-        The GraphQL response, or a 401 JSON response when the request carries no API token.
+        The GraphQL response, a 401 JSON response when the request carries no API token, or a
+        429 JSON response with Retry-After when the token is over its rate limit.
     """
     principal = request_principal(request)
     if principal is None or principal.token_id is None:
         response = JsonResponse({"detail": "An API token is required."}, status=401)
         response["WWW-Authenticate"] = "Bearer"
+        return response
+    wait = retry_after(principal.token_id)
+    if wait is not None:
+        response = JsonResponse({"detail": "Rate limit exceeded."}, status=429)
+        response["Retry-After"] = str(wait)
         return response
     result: HttpResponse = _graphql(request)
     return result

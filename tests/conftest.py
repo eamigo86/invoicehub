@@ -176,3 +176,17 @@ def account(tenant: Tenant) -> BankAccount:
         The account.
     """
     return make_account()
+
+
+@pytest.fixture(autouse=True)
+def clean_cache() -> Generator[None]:
+    """Empty the Django cache around each test, so rate limit counters never leak.
+
+    Yields:
+        Nothing; the cache is cleared before and after the test.
+    """
+    from django.core.cache import cache
+
+    cache.clear()
+    yield
+    cache.clear()
