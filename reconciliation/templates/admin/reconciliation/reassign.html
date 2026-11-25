@@ -1,0 +1,10 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<form method="post" class="max-w-2xl">
+  {% csrf_token %}
+  {{ form.as_p }}
+  <button type="submit" class="bg-primary-600 text-white font-semibold px-4 py-2 rounded-default">Reassign</button>
+  <a href="{% url 'admin:reconciliation_matchproposal_change' proposal.pk %}" class="ml-4">Cancel</a>
+</form>
+{% endblock %}
