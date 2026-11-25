@@ -34,28 +34,27 @@ An API without consumers proves nothing, so v1 includes three:
 
 1. **Example integration** (`examples/shop_integration/`): a script that simulates an online store and, when an order is closed, creates the customer if it does not exist, creates the draft invoice and issues it via GraphQL. It uses an API token with the `invoices:write` scope and runs in CI against the test environment.
 2. **Explorer in the demo:** GraphiQL available in the public demo with a read-only token (`invoices:read`) on the demo tenant, so anyone can try queries without signing up.
-3. **Contract tests:** the schema is exported to `schema.graphql` and versioned in the repo. CI compares the generated schema with the versioned one and fails on breaking changes (removed fields, changed types) that do not come with a deprecation note.
+3. **Contract tests:** the schema is exported to `schema.graphql` and versioned in the repo. CI compares the generated schema with the versioned one and fails on breaking changes (removed fields, changed types) that do not come with a deprecation note. `make schema` regenerates the file, a test fails when it is stale, and `manage.py check_schema_contract --base <sdl>` compares it with the base branch's copy: only removing a field, argument or enum value the base already deprecated is allowed, and dangerous changes are printed without failing.
 
 ### Example integrator query
 
 ```graphql
-query OverdueInvoices {
-  invoices(filter: { status: { in: [ISSUED, PARTIALLY_PAID] }, dueDate: { lt: "2026-11-01" } }, first: 50) {
-    edges {
-      node {
-        number
-        totalMinor
-        currency
-        customer { name taxId }
-        payments { amountMinor valueDate }
-      }
+query OverdueInvoices($cursor: String) {
+  invoices(filter: { status: { in: [ISSUED, PARTIALLY_PAID] }, dueDate: { lt: "2026-11-01" } }) {
+    totalCount
+    results(first: 50, cursor: $cursor) {
+      number
+      total
+      currency
+      customer { name taxId }
+      allocations { results { amount payment { valueDate } } }
     }
-    pageInfo { hasNextPage endCursor }
+    pageInfo(first: 50, cursor: $cursor) { hasNextPage endCursor }
   }
 }
 ```
 
-The exact filter and pagination syntax is whatever django-graphex generates; this example is updated once the schema is settled.
+This is django-graphex's own syntax: the page is `results`, paginated with `first` and `cursor` (the same two arguments on `results` and `pageInfo`, so the client passes `endCursor` to both), money fields are integer cents (`total`), and a payment is reached through the invoice's `allocations`, each with the `amount` allocated to this invoice. A test validates this block against the schema and runs it within the depth and cost limits, so the example cannot drift.
 
 ## UI
 
