@@ -100,6 +100,14 @@ ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {
 Every other form value comes from the admin's own change form, so the POST stays valid."""
 
 
+READ_ONLY_ADMINS: frozenset[type[TenantModel]] = frozenset({AuditEvent})
+"""Models whose admin refuses every add, change and delete for everyone.
+
+The admin isolation suite expects writes to be refused for these and still runs every
+visibility case. A read-only admin missing here, or listed here but writable or unregistered,
+fails the meta-test in test_admin."""
+
+
 def clone_values(model: type[TenantModel]) -> dict[str, Any]:
     """Pick column values that let a second row of the active tenant coexist with a factory row.
 
