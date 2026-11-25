@@ -271,18 +271,33 @@ ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {
     Invoice: "customer",
     InvoiceSeries: "prefix",
     Payment: "reference",
+    BankAccount: "name",
+    BankStatementImport: "bank_account",
+    BankTransaction: "bank_account",
 }
 """Plain text field of each model's admin form that the isolation tests overwrite with a marker.
 
 Every other form value comes from the admin's own change form, so the POST stays valid."""
 
 
-READ_ONLY_ADMINS: frozenset[type[TenantModel]] = frozenset({AuditEvent, Invoice, Payment})
+READ_ONLY_ADMINS: frozenset[type[TenantModel]] = frozenset(
+    {AuditEvent, Invoice, Payment, BankTransaction}
+)
 """Models whose admin refuses every add, change and delete for everyone.
 
 The admin isolation suite expects writes to be refused for these and still runs every
 visibility case. A read-only admin missing here, or listed here but writable or unregistered,
 fails the meta-test in test_admin."""
+
+PARTIAL_ADMINS: dict[type[TenantModel], frozenset[str]] = {
+    BankAccount: frozenset({"add", "change"}),
+    BankStatementImport: frozenset({"add"}),
+}
+"""Models whose admin allows only some of add, change and delete, mapped to the allowed ones.
+
+Accounts cannot be deleted because imports reference them, and imports are created by the
+upload and never edited. Any other admin missing from this and READ_ONLY_ADMINS must allow all
+three, which the meta-test in test_admin checks."""
 
 
 def clone_values(model: type[TenantModel]) -> dict[str, Any]:
@@ -498,6 +513,7 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.services.record_payment",
         "billing.services.send_invoice",
         "reconciliation.services.create_import",
+        "reconciliation.services.save_bank_account",
     }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.test import TestCase
 
 from reconciliation.models import BankAccount, BankStatementImport, BankTransaction
@@ -338,3 +338,21 @@ def test_an_unknown_import_raises(tenant: Tenant) -> None:
     """
     with pytest.raises(BankStatementImport.DoesNotExist):
         import_statement(str(tenant.pk), "00000000-0000-0000-0000-000000000000")
+
+
+def test_create_import_refuses_content_over_the_size_limit(
+    tenant: Tenant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file one byte over the limit is refused and nothing is stored or enqueued.
+
+    Args:
+        tenant: Active tenant.
+        monkeypatch: Pytest monkeypatch fixture, used to shrink the limit.
+    """
+    content = csv(RENT)
+    monkeypatch.setattr("reconciliation.services.MAX_STATEMENT_BYTES", len(content) - 1)
+    with pytest.raises(ValidationError):
+        create_import(writer(tenant), make_account(), content)
+    assert not BankStatementImport.objects.exists()
+    monkeypatch.setattr("reconciliation.services.MAX_STATEMENT_BYTES", len(content))
+    assert create_import(writer(tenant), BankAccount.objects.get(), content).pk
