@@ -9,9 +9,15 @@ from django.core import mail
 from billing.models import AuditEvent, Customer, Invoice, InvoiceEmail
 from billing.services import DraftLine, issue_invoice, save_draft, send_invoice
 from billing.tasks import render_invoice_pdf, send_invoice_email
-from reconciliation.models import BankAccount, BankStatementImport, BankTransaction
-from reconciliation.services import create_import
-from reconciliation.tasks import import_statement
+from reconciliation.models import (
+    BankAccount,
+    BankStatementImport,
+    BankTransaction,
+    MatchProposal,
+    ReconciliationRun,
+)
+from reconciliation.services import create_import, run_reconciliation
+from reconciliation.tasks import import_statement, reconcile_run
 from tenancy.context import tenant_context
 from tenancy.models import Tenant
 from tenancy.permissions import Permission, Principal
@@ -98,3 +104,70 @@ def test_b_cannot_run_the_import_of_a() -> None:
         assert not BankTransaction.objects.exists()
     with tenant_context(b.pk):
         assert not BankTransaction.objects.exists()
+
+
+def test_b_cannot_run_the_reconciliation_of_a() -> None:
+    """Under B, A's run is not found: it stays pending and no proposal is written."""
+    a = Tenant.objects.create(name="A")
+    b = Tenant.objects.create(name="B")
+    with tenant_context(a.pk):
+        run = run_reconciliation(Principal(a.pk, frozenset(Permission)))
+    with pytest.raises(ReconciliationRun.DoesNotExist):
+        reconcile_run(str(b.pk), str(run.pk))
+    with tenant_context(a.pk):
+        stored = ReconciliationRun.objects.get(pk=run.pk)
+        assert (stored.status, stored.completed_at) == (ReconciliationRun.Status.PENDING, None)
+        assert not MatchProposal.objects.exists()
+    with tenant_context(b.pk):
+        assert not ReconciliationRun.objects.exists()
+
+
+def test_a_run_of_a_never_considers_the_rows_of_b() -> None:
+    """A's run proposes only A's rows, even when B has a payment and invoice that fit."""
+    a = Tenant.objects.create(
+        name="A",
+        legal_name="A Inc.",
+        address_line1="1 Main St",
+        city="Austin",
+        state="TX",
+        postal_code="78701",
+    )
+    b = Tenant.objects.create(
+        name="B",
+        legal_name="B Inc.",
+        address_line1="2 Main St",
+        city="Austin",
+        state="TX",
+        postal_code="78701",
+    )
+    for tenant in (a, b):
+        principal = Principal(tenant.pk, frozenset(Permission))
+        with tenant_context(tenant.pk):
+            customer = Customer.objects.create(name="Client")
+            draft = save_draft(
+                principal, Invoice(customer=customer), [DraftLine("L", Decimal(1), 100)]
+            )
+            invoice = issue_invoice(principal, draft)
+            row = create_import(
+                principal,
+                BankAccount.objects.create(
+                    name="Chase",
+                    account_identifier="1234",
+                    date_column="Date",
+                    amount_column="Amount",
+                    description_column="Memo",
+                ),
+                f"Date,Amount,Memo\n{invoice.issue_date:%m/%d/%Y},1.00,{invoice.reference}\n".encode(),
+            )
+            import_statement(str(tenant.pk), str(row.pk))
+    with tenant_context(a.pk):
+        run = run_reconciliation(Principal(a.pk, frozenset(Permission)))
+    reconcile_run(str(a.pk), str(run.pk))
+    with tenant_context(a.pk):
+        stored = ReconciliationRun.objects.get(pk=run.pk)
+        assert (stored.transactions_considered, stored.invoices_considered) == (1, 1)
+        proposal = MatchProposal.objects.get()
+        assert proposal.transactions.get().tenant_id == a.pk
+        assert proposal.invoices.get().tenant_id == a.pk
+    with tenant_context(b.pk):
+        assert not MatchProposal.objects.exists()

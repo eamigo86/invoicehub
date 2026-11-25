@@ -226,6 +226,13 @@ class ReconciliationRun(TenantModel):
         """Model options."""
 
         ordering = ["-created_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant"],
+                condition=models.Q(status="pending"),
+                name="reconrun_one_pending_per_tenant",
+            )
+        ]
 
     def __str__(self) -> str:
         """Describe the run by date and status.

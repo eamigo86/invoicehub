@@ -259,7 +259,9 @@ def make_reconciliation_run() -> TenantModel:
     Returns:
         The saved run.
     """
-    run: TenantModel = ReconciliationRun.objects.create(config={})
+    run: TenantModel = ReconciliationRun.objects.create(
+        config={}, status=ReconciliationRun.Status.COMPLETED
+    )
     return run
 
 
@@ -585,6 +587,7 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.services.send_invoice",
         "reconciliation.services.create_import",
         "reconciliation.services.save_bank_account",
+        "reconciliation.services.run_reconciliation",
     }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.
@@ -610,6 +613,7 @@ TASK_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.tasks.render_invoice_pdf",
         "billing.tasks.send_invoice_email",
         "reconciliation.tasks.import_statement",
+        "reconciliation.tasks.reconcile_run",
     }
 )
 """Names of the Celery tasks that have isolation cases; add every new task here.

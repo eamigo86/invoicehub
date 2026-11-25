@@ -144,7 +144,9 @@ def test_runs_are_ordered_newest_first(tenant: Tenant) -> None:
     Args:
         tenant: Active tenant.
     """
-    first, second = make_run(), make_run()
+    first = make_run()
+    ReconciliationRun.objects.filter(pk=first.pk).update(status="completed")
+    second = make_run()
     assert list(ReconciliationRun.objects.all()) == [second, first]
 
 
