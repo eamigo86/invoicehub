@@ -260,7 +260,9 @@ def make_reconciliation_run() -> TenantModel:
         The saved run.
     """
     run: TenantModel = ReconciliationRun.objects.create(
-        config={}, status=ReconciliationRun.Status.COMPLETED
+        config={},
+        status=ReconciliationRun.Status.COMPLETED,
+        engine_version=f"engine-{uuid.uuid4().hex[:8]}",
     )
     return run
 
@@ -275,7 +277,8 @@ def make_match_proposal() -> TenantModel:
         run=ReconciliationRun.objects.create(config={}),
         kind=MatchProposal.Kind.ONE_TO_ONE,
         engine_status=MatchProposal.EngineStatus.AUTO,
-        score=0.95,
+        # Unique and shown by the admin list, which is how the admin suite tells rows apart.
+        score=(uuid.uuid4().int % 800_000 + 100_000) / 1_000_000,
         breakdown={},
         residual=0,
     )
@@ -339,6 +342,8 @@ ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {
     BankAccount: "name",
     BankStatementImport: "bank_account",
     BankTransaction: "bank_account",
+    ReconciliationRun: "engine_version",
+    MatchProposal: "score",
 }
 """Plain text field of each model's admin form that the isolation tests overwrite with a marker.
 
@@ -346,7 +351,7 @@ Every other form value comes from the admin's own change form, so the POST stays
 
 
 READ_ONLY_ADMINS: frozenset[type[TenantModel]] = frozenset(
-    {AuditEvent, Invoice, Payment, BankTransaction}
+    {AuditEvent, Invoice, Payment, BankTransaction, MatchProposal}
 )
 """Models whose admin refuses every add, change and delete for everyone.
 
@@ -357,6 +362,7 @@ fails the meta-test in test_admin."""
 PARTIAL_ADMINS: dict[type[TenantModel], frozenset[str]] = {
     BankAccount: frozenset({"add", "change"}),
     BankStatementImport: frozenset({"add"}),
+    ReconciliationRun: frozenset({"add"}),
 }
 """Models whose admin allows only some of add, change and delete, mapped to the allowed ones.
 
