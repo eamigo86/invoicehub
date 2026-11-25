@@ -6,7 +6,14 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from reconciliation.parsing import ParsedRow, StatementError, parse_statement, to_cents
+from reconciliation.parsing import (
+    DESCRIPTION_MAX_LENGTH,
+    PAYER_MAX_LENGTH,
+    ParsedRow,
+    StatementError,
+    parse_statement,
+    to_cents,
+)
 
 MAPPING = {
     "date_column": "Date",
@@ -119,6 +126,24 @@ def test_parse_bad_amount_names_row() -> None:
     """A bad amount names its 1-based data row."""
     with pytest.raises(StatementError, match="row 3"):
         parse("01/31/2026,10.00,A,B\n01/31/2026,5.00,A,B\n01/31/2026,1.234,C,D\n")
+
+
+def test_parse_refuses_a_too_long_description_naming_the_row() -> None:
+    """A description over the column limit fails the file and names its row."""
+    with pytest.raises(StatementError, match=r"row 2: description"):
+        parse(f"01/31/2026,10.00,A,B\n01/31/2026,10.00,{'x' * (DESCRIPTION_MAX_LENGTH + 1)},D\n")
+
+
+def test_parse_refuses_a_too_long_payer_naming_the_row() -> None:
+    """A payer over the column limit fails the file and names its row."""
+    with pytest.raises(StatementError, match=r"row 1: payer"):
+        parse(f"01/31/2026,10.00,A,{'x' * (PAYER_MAX_LENGTH + 1)}\n")
+
+
+def test_parse_accepts_values_at_the_limits() -> None:
+    """A description and a payer exactly at their limits are kept."""
+    row = parse(f"01/31/2026,10.00,{'x' * DESCRIPTION_MAX_LENGTH},{'y' * PAYER_MAX_LENGTH}\n")[0]
+    assert (len(row.description), len(row.payer)) == (DESCRIPTION_MAX_LENGTH, PAYER_MAX_LENGTH)
 
 
 def test_parse_skips_blank_and_zero_rows() -> None:

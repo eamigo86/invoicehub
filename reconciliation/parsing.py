@@ -11,6 +11,11 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 
+DESCRIPTION_MAX_LENGTH = 500
+"""Longest description a BankTransaction stores."""
+PAYER_MAX_LENGTH = 200
+"""Longest payer a BankTransaction stores."""
+
 # Plain digits, or digits grouped by thousands commas, with 0 to 2 decimal places.
 AMOUNT_RE = re.compile(r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?")
 
@@ -84,7 +89,7 @@ def parse_statement(content: bytes, mapping: Mapping[str, str], account: str) ->
 
     Raises:
         StatementError: If the bytes are not UTF-8, a mapped column is missing, or a row has a
-            bad date or amount.
+            bad date or amount, or a description or payer is too long for its column.
     """
     try:
         text = content.decode("utf-8-sig")
@@ -121,6 +126,15 @@ def parse_statement(content: bytes, mapping: Mapping[str, str], account: str) ->
         if amount == 0:
             continue
         description = values[columns["description_column"]]
+        payer = values[payer_column] if payer_column else ""
+        if len(description) > DESCRIPTION_MAX_LENGTH:
+            raise StatementError(
+                f"row {number}: description is longer than {DESCRIPTION_MAX_LENGTH} characters"
+            )
+        if len(payer) > PAYER_MAX_LENGTH:
+            raise StatementError(
+                f"row {number}: payer is longer than {PAYER_MAX_LENGTH} characters"
+            )
         # ponytail: occurrence counts repeats within one file, so two statements that split one
         # day's identical rows differently can collide or duplicate. Upgrade path: hash a
         # bank-provided transaction id when the CSV has one.
@@ -134,7 +148,7 @@ def parse_statement(content: bytes, mapping: Mapping[str, str], account: str) ->
                 value_date=value_date,
                 amount=amount,
                 description=description,
-                payer=values[payer_column] if payer_column else "",
+                payer=payer,
                 dedupe_hash=hashlib.sha256(encoded.encode()).hexdigest(),
             )
         )

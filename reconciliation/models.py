@@ -6,6 +6,7 @@ from django.contrib.postgres.functions import RandomUUID
 from django.db import models
 
 from core.models import Currency
+from reconciliation.parsing import DESCRIPTION_MAX_LENGTH, PAYER_MAX_LENGTH
 from tenancy.models import TenantModel
 
 
@@ -147,8 +148,8 @@ class BankTransaction(TenantModel):
     )
     value_date = models.DateField()
     amount = models.BigIntegerField()
-    description = models.CharField(max_length=500)
-    payer = models.CharField(max_length=200, blank=True)
+    description = models.CharField(max_length=DESCRIPTION_MAX_LENGTH)
+    payer = models.CharField(max_length=PAYER_MAX_LENGTH, blank=True)
     dedupe_hash = models.CharField(max_length=64)
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -66,3 +66,20 @@ def enqueued_email(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     delay = MagicMock()
     monkeypatch.setattr(send_invoice_email, "delay", delay)
     return delay
+
+
+@pytest.fixture(autouse=True)
+def enqueued_import(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Replace the delay of the statement import task, so tests never reach a broker.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+
+    Returns:
+        The mock standing in for delay.
+    """
+    from reconciliation.tasks import import_statement
+
+    delay = MagicMock()
+    monkeypatch.setattr(import_statement, "delay", delay)
+    return delay
