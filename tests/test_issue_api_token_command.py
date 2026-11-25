@@ -117,6 +117,32 @@ def test_an_unknown_membership_is_refused(user: str, tenant: str) -> None:
         run(*options(user=user, tenant=tenant))
 
 
+def test_a_deactivated_user_is_refused_like_an_unknown_member() -> None:
+    """A user who can no longer sign in cannot mint tokens either."""
+    _, user = make_member(Membership.Role.OWNER)
+    User.objects.filter(pk=user.pk).update(is_active=False)
+    with pytest.raises(CommandError, match="no member"):
+        run(*options())
+    assert ApiToken.objects.count() == 0
+
+
+def test_an_accountant_is_refused_because_it_cannot_manage_tokens() -> None:
+    """The accountant role lacks tokens:manage, so no token is stored."""
+    make_member(Membership.Role.ACCOUNTANT)
+    with pytest.raises(CommandError, match="not allowed"):
+        run(*options())
+    assert ApiToken.objects.count() == 0
+
+
+def test_a_member_of_another_tenant_cannot_mint_for_this_one() -> None:
+    """Being an owner elsewhere grants nothing in a tenant the user does not belong to."""
+    make_member(Membership.Role.OWNER, tenant_name="Other")
+    Tenant.objects.create(name="Acme")
+    with pytest.raises(CommandError, match="no member"):
+        run(*options())
+    assert ApiToken.objects.count() == 0
+
+
 def test_a_name_shared_by_two_tenants_is_ambiguous() -> None:
     """A tenant name that matches two tenants of the user is refused instead of guessed."""
     _, user = make_member(Membership.Role.OWNER)
@@ -124,6 +150,16 @@ def test_a_name_shared_by_two_tenants_is_ambiguous() -> None:
     Membership.objects.create(user=user, tenant=second, role=Membership.Role.OWNER)
     with pytest.raises(CommandError, match="more than one"):
         run(*options())
+
+
+def test_two_users_differing_only_in_email_case_are_ambiguous() -> None:
+    """The email lookup ignores case, so two such members of one tenant are refused."""
+    tenant, _ = make_member(Membership.Role.OWNER)
+    twin = User.objects.create_user("ANA", "ANA@example.com", "pw")
+    Membership.objects.create(user=twin, tenant=tenant, role=Membership.Role.OWNER)
+    with pytest.raises(CommandError, match="more than one member or tenant"):
+        run(*options())
+    assert ApiToken.objects.count() == 0
 
 
 def test_an_invalid_scope_is_a_command_error() -> None:

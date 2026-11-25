@@ -12,7 +12,7 @@ from tenancy.tokens import issue_token
 
 
 def _memberships(email: str, tenant: str) -> list[Membership]:
-    """Find the memberships of a user in the tenants that match a name or an id.
+    """Find the memberships of an active user in the tenants that match a name or an id.
 
     Args:
         email: Email of the member, compared without regard to case.
@@ -21,7 +21,9 @@ def _memberships(email: str, tenant: str) -> list[Membership]:
     Returns:
         The matching memberships, empty when there are none.
     """
-    found = Membership.objects.filter(user__email__iexact=email).select_related("user")
+    found = Membership.objects.filter(
+        user__email__iexact=email, user__is_active=True
+    ).select_related("user")
     try:
         return list(found.filter(tenant_id=UUID(tenant)))
     except ValueError:
@@ -60,8 +62,9 @@ class Command(BaseCommand):
             **options: Parsed options.
 
         Raises:
-            CommandError: When the user is not a member of the tenant, the name matches more
-                than one tenant, the member may not manage tokens, or the token is invalid.
+            CommandError: When the user is not a member of the tenant, the email or name
+                matches more than one member or tenant, the member may not manage tokens, or the
+                token is invalid.
         """
         found = _memberships(options["user"], options["tenant"])
         if not found:
@@ -70,7 +73,8 @@ class Command(BaseCommand):
             )
         if len(found) > 1:
             raise CommandError(
-                f"The name {options['tenant']} matches more than one tenant; pass the tenant id."
+                f"{options['user']} in {options['tenant']} matches more than one member or tenant; "
+                "pass the tenant id and an exact email."
             )
         membership = found[0]
         try:
