@@ -241,6 +241,26 @@ def test_the_issue_date_is_the_day_in_the_tenant_timezone(
     assert (issued.year, issued.reference) == (2026, "INV-2026-00001")
 
 
+def test_a_clock_behind_the_series_year_is_refused(
+    writer: Principal, customer: Customer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A series already in 2027 refuses a clock still in 2026 and keeps its counter.
+
+    Args:
+        writer: Principal allowed to write invoices.
+        customer: Customer to invoice.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    InvoiceSeries.objects.create(kind=Invoice.Kind.INVOICE, prefix="INV-", year=2027, next_number=4)
+    pending = draft(writer, customer)
+    freeze_now(monkeypatch, FIXED_NOW)
+    with pytest.raises(InvalidTransition, match="clock"):
+        issue_invoice(writer, pending)
+    series = InvoiceSeries.objects.get()
+    assert (series.year, series.next_number) == (2027, 4)
+    assert Invoice.objects.get().status == Invoice.Status.DRAFT
+
+
 def test_the_due_date_is_kept_unless_it_precedes_the_issue_date(
     writer: Principal, customer: Customer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -398,6 +418,7 @@ def test_concurrent_issues_take_every_number_exactly_once() -> None:
         thread.start()
     for thread in threads:
         thread.join(timeout=60)
+    assert not any(thread.is_alive() for thread in threads)
     assert errors == []
     with tenant_context(tenant.pk):
         assert sorted(Invoice.objects.values_list("number", flat=True)) == list(range(1, 11))

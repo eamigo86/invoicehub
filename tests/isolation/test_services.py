@@ -21,12 +21,14 @@ from billing.services import (
     delete_customer,
     delete_draft,
     delete_product,
+    delete_series,
     delete_tax_rate,
     issue_invoice,
     record_event,
     save_customer,
     save_draft,
     save_product,
+    save_series,
     save_tax_rate,
     update_issuer,
 )
@@ -546,3 +548,67 @@ def test_the_series_counters_of_two_tenants_are_independent(
         assert InvoiceSeries.objects.get().next_number == 2
     with tenant_context(b.pk):
         assert InvoiceSeries.objects.get().next_number == 4
+
+
+def test_b_cannot_edit_the_series_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, A's series is not found and keeps its prefix and counter.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        series = save_series(owner_of(a), InvoiceSeries(kind=Invoice.Kind.INVOICE, prefix="INV-"))
+    series.prefix = "HACK-"
+    with tenant_context(b.pk), pytest.raises(InvoiceSeries.DoesNotExist):
+        save_series(owner_of(b), series)
+    with tenant_context(a.pk):
+        stored = InvoiceSeries.objects.get()
+        assert (stored.prefix, stored.next_number) == ("INV-", 1)
+
+
+def test_a_principal_of_a_cannot_save_a_series_while_b_is_current(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """A principal of A holding settings:manage is refused under B and nothing is stored.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(b.pk):
+        with pytest.raises(PermissionDenied):
+            save_series(owner_of(a), InvoiceSeries(kind=Invoice.Kind.INVOICE, prefix="INV-"))
+        assert not InvoiceSeries.objects.exists()
+
+
+def test_a_principal_of_a_cannot_delete_a_series_while_b_is_current(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """A principal of A holding settings:manage cannot delete B's series while B is current.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(b.pk):
+        series = save_series(owner_of(b), InvoiceSeries(kind=Invoice.Kind.INVOICE, prefix="INV-"))
+        with pytest.raises(PermissionDenied):
+            delete_series(owner_of(a), series)
+        assert InvoiceSeries.objects.filter(pk=series.pk).exists()
+
+
+def test_b_cannot_delete_the_series_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, deleting A's series is a no-op, because Row-Level Security hides the row.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        series = save_series(owner_of(a), InvoiceSeries(kind=Invoice.Kind.INVOICE, prefix="INV-"))
+    pk = series.pk
+    with tenant_context(b.pk):
+        delete_series(owner_of(b), series)
+    with tenant_context(a.pk):
+        assert InvoiceSeries.objects.filter(pk=pk).exists()

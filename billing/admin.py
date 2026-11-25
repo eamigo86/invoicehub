@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.core.exceptions import ValidationError
 from django.db.models import QuerySet
 from django.forms import ModelForm, ModelMultipleChoiceField
@@ -10,15 +10,19 @@ from django.http import HttpRequest
 from unfold.admin import TabularInline  # type: ignore[import-untyped]
 
 from tenancy.admin import TenantModelAdmin
-from tenancy.permissions import Permission, request_principal
+from tenancy.permissions import Permission, has_permission, request_principal
 
-from .models import AuditEvent, Customer, Invoice, InvoiceLine, Product, TaxRate
+from .models import AuditEvent, Customer, Invoice, InvoiceLine, InvoiceSeries, Product, TaxRate
 from .services import (
+    InvalidTransition,
     delete_customer,
     delete_product,
+    delete_series,
     delete_tax_rate,
+    issue_invoice,
     save_customer,
     save_product,
+    save_series,
     save_tax_rate,
 )
 
@@ -210,6 +214,87 @@ class ProductAdmin(TenantModelAdmin):
             delete_product(request_principal(request), product)
 
 
+class InvoiceSeriesForm(ModelForm):  # type: ignore[type-arg]
+    """Form that reports a second series of a kind as a field error, as the tenant is no field."""
+
+    class Meta:
+        """Form options."""
+
+        model = InvoiceSeries
+        fields = ("kind", "prefix")
+
+    def clean_kind(self) -> str:
+        """Refuse a kind for which the tenant already has a series.
+
+        Returns:
+            The cleaned kind.
+
+        Raises:
+            ValidationError: When the tenant already has a series of that kind.
+        """
+        kind: str = self.cleaned_data["kind"]
+        if InvoiceSeries.objects.exclude(pk=self.instance.pk).filter(kind=kind).exists():
+            raise ValidationError("A series of this kind already exists.")
+        return kind
+
+
+@admin.register(InvoiceSeries)
+class InvoiceSeriesAdmin(TenantModelAdmin):
+    """Admin for the active tenant's invoice series, limited to settings:manage holders.
+
+    The counter and the year are shown but never edited, and the kind is fixed once created.
+    """
+
+    write_permission = Permission.SETTINGS_MANAGE
+    form = InvoiceSeriesForm
+    list_display = ("kind", "prefix", "year", "next_number")
+    fields = ("kind", "prefix", "year", "next_number")
+
+    def get_readonly_fields(self, request: HttpRequest, obj: Any = None) -> tuple[str, ...]:
+        """Make the counter and year read-only, and the kind too once the series exists.
+
+        Args:
+            request: Current request.
+            obj: Series being changed, or None when adding.
+
+        Returns:
+            The names of the read-only fields.
+        """
+        return ("year", "next_number") + (("kind",) if obj else ())
+
+    def save_model(
+        self, request: HttpRequest, obj: InvoiceSeries, form: "ModelForm[Any]", change: bool
+    ) -> None:
+        """Save a series through the service.
+
+        Args:
+            request: Current request.
+            obj: Series being saved.
+            form: Form that produced the series.
+            change: Whether an existing series is being changed.
+        """
+        save_series(request_principal(request), obj)
+
+    def delete_model(self, request: HttpRequest, obj: InvoiceSeries) -> None:
+        """Delete a series through the service.
+
+        Args:
+            request: Current request.
+            obj: Series being deleted.
+        """
+        delete_series(request_principal(request), obj)
+
+    def delete_queryset(self, request: HttpRequest, queryset: QuerySet[InvoiceSeries]) -> None:
+        """Delete selected series one by one through the service.
+
+        Args:
+            request: Current request.
+            queryset: Series selected for deletion.
+        """
+        for series in queryset:
+            delete_series(request_principal(request), series)
+
+
 @admin.register(AuditEvent)
 class AuditEventAdmin(TenantModelAdmin):
     """Read-only admin for the active tenant's audit log; no one adds, changes or deletes events."""
@@ -324,6 +409,46 @@ class InvoiceAdmin(TenantModelAdmin):
     list_filter = ("kind", "status")
     list_select_related = ("customer",)
     inlines = [InvoiceLineInline]
+    actions = ["issue_selected_drafts"]
+
+    def has_issue_permission(self, request: HttpRequest) -> bool:
+        """Offer the issue action to principals who hold invoices:write.
+
+        Args:
+            request: Current request.
+
+        Returns:
+            True when the principal may write invoices.
+        """
+        return has_permission(request_principal(request), Permission.INVOICES_WRITE)
+
+    @admin.action(description="Issue selected drafts", permissions=["issue"])
+    def issue_selected_drafts(self, request: HttpRequest, queryset: QuerySet[Invoice]) -> None:
+        """Issue each selected draft through the service and report every outcome.
+
+        Drafts are taken ordered by kind and pk.
+
+        Args:
+            request: Current request.
+            queryset: Invoices selected in the changelist.
+        """
+        principal = request_principal(request)
+        # Always take locks in the same order, so concurrent actions cannot deadlock.
+        for invoice in queryset.order_by("kind", "pk"):
+            try:
+                issued = issue_invoice(principal, invoice)
+            except Invoice.DoesNotExist:
+                self.message_user(
+                    request, f"{invoice.pk}: the invoice no longer exists.", messages.ERROR
+                )
+            except ValidationError as error:
+                self.message_user(
+                    request, f"{invoice.pk}: {' '.join(error.messages)}", messages.ERROR
+                )
+            except InvalidTransition as error:
+                self.message_user(request, f"{invoice.pk}: {error}", messages.ERROR)
+            else:
+                self.message_user(request, f"Issued {issued.reference}.", messages.SUCCESS)
 
     def has_add_permission(self, request: HttpRequest) -> bool:
         """Refuse adding invoices, which only the services create.
