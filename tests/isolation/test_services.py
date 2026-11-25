@@ -1,6 +1,7 @@
 """Billing services never act across tenants, whatever the principal holds."""
 
 import uuid
+from collections.abc import Callable
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -41,11 +42,28 @@ from billing.services import (
     update_issuer,
 )
 from core.models import Currency
-from reconciliation.models import BankAccount, BankStatementImport, ReconciliationRun
-from reconciliation.services import create_import, run_reconciliation, save_bank_account
+from reconciliation.models import (
+    BankAccount,
+    BankStatementImport,
+    MatchProposal,
+    MatchProposalInvoice,
+    ReconciliationRun,
+)
+from reconciliation.services import (
+    accept_proposal,
+    create_import,
+    reassign_proposal,
+    reject_proposal,
+    run_reconciliation,
+    save_bank_account,
+)
 from tenancy.context import TenantMismatch, tenant_context
 from tenancy.models import Tenant
 from tenancy.permissions import Permission, Principal
+from tests.test_payments import issued_invoice
+from tests.test_reconciliation_apply import propose
+from tests.test_reconciliation_engine import make_tx
+from tests.test_reconciliation_import import make_account
 
 pytestmark = [pytest.mark.isolation, pytest.mark.django_db]
 
@@ -851,3 +869,89 @@ def test_a_principal_of_a_cannot_request_a_run_under_b(tenants: tuple[Tenant, Te
     for tenant in tenants:
         with tenant_context(tenant.pk):
             assert not ReconciliationRun.objects.exists()
+
+
+def proposal_of(tenant: Tenant) -> tuple[MatchProposal, Invoice]:
+    """Create a pending proposal, with its invoice, in a tenant.
+
+    Args:
+        tenant: Tenant that owns the proposal.
+
+    Returns:
+        The proposal and the invoice the engine paired.
+    """
+    Tenant.objects.filter(pk=tenant.pk).update(
+        legal_name="Acme Inc.",
+        address_line1="1 Main St",
+        city="Austin",
+        state="TX",
+        postal_code="1",
+    )
+    with tenant_context(tenant.pk):
+        customer = save_customer(owner_of(tenant), Customer(name="Acme"))
+        invoice = issued_invoice(owner_of(tenant), customer, 1000)
+        proposal = propose("1:1", [make_tx(make_account(), 1000)], [invoice], status="suggested")
+    return proposal, invoice
+
+
+@pytest.mark.parametrize("review", [accept_proposal, reject_proposal])
+def test_b_cannot_review_a_proposal_of_a(
+    tenants: tuple[Tenant, Tenant], review: Callable[[Principal, MatchProposal], object]
+) -> None:
+    """Under B, A's proposal is not found for accept and reject, and A's data is unchanged.
+
+    Args:
+        tenants: Tenants A and B.
+        review: Service under test.
+    """
+    a, b = tenants
+    proposal, _ = proposal_of(a)
+    with tenant_context(b.pk), pytest.raises(MatchProposal.DoesNotExist):
+        review(owner_of(b), proposal)
+    with tenant_context(a.pk):
+        stored = MatchProposal.objects.get(pk=proposal.pk)
+        assert stored.state == MatchProposal.State.PENDING and stored.decided_at is None
+        assert not Payment.objects.exists()
+        assert not AuditEvent.objects.filter(action__startswith="reconciliation.").exists()
+
+
+def test_b_cannot_reassign_a_proposal_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, A's proposal is not found even when the invoice chosen is B's own.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    proposal, _ = proposal_of(a)
+    _, invoice_of_b = proposal_of(b)
+    with tenant_context(b.pk), pytest.raises(MatchProposal.DoesNotExist):
+        reassign_proposal(owner_of(b), proposal, [invoice_of_b])
+    with tenant_context(a.pk):
+        assert MatchProposal.objects.get(pk=proposal.pk).state == MatchProposal.State.PENDING
+        assert not Payment.objects.exists()
+    with tenant_context(b.pk):
+        assert not Payment.objects.exists()
+
+
+def test_a_proposal_of_a_cannot_be_reassigned_to_an_invoice_of_b(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """Under A, an invoice of B is not visible, so the choice is refused and nothing is written.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    proposal, invoice_of_a = proposal_of(a)
+    _, invoice_of_b = proposal_of(b)
+    with tenant_context(a.pk):
+        with pytest.raises(Invoice.DoesNotExist):
+            reassign_proposal(owner_of(a), proposal, [invoice_of_b])
+        stored = MatchProposal.objects.get(pk=proposal.pk)
+        assert stored.state == MatchProposal.State.PENDING and stored.kind == "1:1"
+        links = MatchProposalInvoice.objects.filter(proposal=stored)
+        assert [link.invoice_id for link in links] == [invoice_of_a.pk]
+        assert not Payment.objects.exists()
+    with tenant_context(b.pk):
+        assert Invoice.objects.get(pk=invoice_of_b.pk).status == Invoice.Status.ISSUED
+        assert not Payment.objects.exists()
