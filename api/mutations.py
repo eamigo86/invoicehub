@@ -23,18 +23,20 @@ from graphql import (
 )
 
 from api.errors import HANDLED, DomainError, DomainErrorType, NotFound, domain_errors
-from api.inputs import CustomerInput, DraftInvoiceInput, DraftReference
+from api.inputs import CustomerInput, DraftInvoiceInput, InvoiceReference, SendInvoiceInput
 from api.types import CustomerType, InvoiceType
 from billing.models import Customer, Invoice
 from billing.services import (
     DraftLine,
     delete_draft,
+    issue_invoice,
     list_customers,
     list_invoices,
     list_products,
     list_tax_rates,
     save_customer,
     save_draft,
+    send_invoice,
 )
 from tenancy.permissions import Principal, request_principal
 
@@ -255,7 +257,7 @@ class DeleteDraftPayload(Payload):
         principal = request_principal(info.context)
 
         def delete() -> str:
-            reference = DraftReference.model_validate({"id": args["id"]})
+            reference = InvoiceReference.model_validate({"id": args["id"]})
             invoice = _find(list_invoices, principal, reference.id, "id", "Invoice")
             delete_draft(principal, invoice)
             return str(reference.id)
@@ -264,9 +266,78 @@ class DeleteDraftPayload(Payload):
         return cls.reply(id=deleted, errors=errors)
 
 
+class IssueInvoicePayload(Payload):
+    """The invoice that was issued, or the reasons it was not."""
+
+    invoice = field(InvoiceType)
+
+    class Arguments:
+        """Arguments of issueInvoice."""
+
+        id = GraphQLArgument(GraphQLNonNull(GraphQLID))
+
+    @classmethod
+    def mutate(cls, root: Any, info: GraphQLResolveInfo[Any], **args: Any) -> Any:
+        """Issue a draft invoice or credit note, which numbers and freezes it.
+
+        Args:
+            root: Unused root value.
+            info: Resolve info, whose context is the request.
+            **args: Arguments of the field, holding the id.
+
+        Returns:
+            The payload.
+        """
+        principal = request_principal(info.context)
+
+        def issue() -> Invoice:
+            reference = InvoiceReference.model_validate({"id": args["id"]})
+            invoice = _find(list_invoices, principal, reference.id, "id", "Invoice")
+            return issue_invoice(principal, invoice)
+
+        invoice, errors = _attempt(issue)
+        return cls.reply(invoice=invoice, errors=errors)
+
+
+class SendInvoicePayload(Payload):
+    """The invoice whose email was requested, or the reasons it was not."""
+
+    invoice = field(InvoiceType)
+
+    class Arguments:
+        """Arguments of sendInvoice."""
+
+        input = _input_argument(SendInvoiceInput)
+
+    @classmethod
+    def mutate(cls, root: Any, info: GraphQLResolveInfo[Any], **args: Any) -> Any:
+        """Request that an issued invoice is emailed, once per idempotency key.
+
+        Args:
+            root: Unused root value.
+            info: Resolve info, whose context is the request.
+            **args: Arguments of the field, holding the input.
+
+        Returns:
+            The payload.
+        """
+        principal = request_principal(info.context)
+
+        def send() -> Invoice:
+            data = SendInvoiceInput.model_validate(args["input"])
+            invoice = _find(list_invoices, principal, data.id, "id", "Invoice")
+            send_invoice(principal, invoice, data.idempotency_key, data.recipients)
+            return invoice
+
+        invoice, errors = _attempt(send)
+        return cls.reply(invoice=invoice, errors=errors)
+
+
 class Mutation(ObjectType):
     """Root mutation type."""
 
     save_customer = SaveCustomerPayload.Field()
     save_draft = SaveDraftPayload.Field()
     delete_draft = DeleteDraftPayload.Field()
+    issue_invoice = IssueInvoicePayload.Field()
+    send_invoice = SendInvoicePayload.Field()
