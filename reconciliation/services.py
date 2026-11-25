@@ -15,7 +15,13 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from billing.models import Invoice, Payment
-from billing.services import InvalidTransition, record_event, record_payment
+from billing.services import (
+    InvalidTransition,
+    _payment_snapshot,
+    record_event,
+    record_payment,
+    reverse_payment,
+)
 from reconciliation import engine
 from reconciliation.models import (
     BankAccount,
@@ -467,3 +473,69 @@ def reassign_proposal(
     )
     locked.save(update_fields=["kind"])
     return _apply_proposal(principal, locked, reassigned_from=engine)
+
+
+@transaction.atomic
+def undo_proposal(principal: Principal | None, proposal: MatchProposal) -> MatchProposal:
+    """Undo an applied or reassigned proposal by reversing the bank payments it recorded.
+
+    Both reconciliation:write and invoices:write are checked first. The proposal and its
+    transactions are locked in the order _apply_proposal uses, and the state must be applied or
+    reassigned. The payment of each transaction goes through reverse_payment, which restores the
+    invoices and clears the link; a transaction whose payment is already gone is skipped. The
+    proposal ends undone with the undoing user and the time, which is not a held state, so the
+    transactions and invoices are free for the next run. The event
+    reconciliation.proposal_undone records the state, payment ids and invoice ids before, and
+    the state after. The before state also keeps the previous decision and every payment reversed
+    with its allocations, the only trace of a payment with none. There is no closed period yet,
+    so an undo is always allowed. Everything runs in one transaction, so any refusal, including
+    one of reverse_payment, writes nothing.
+
+    Args:
+        principal: Acting principal, who needs reconciliation:write and invoices:write or
+            PermissionDenied is raised.
+        proposal: Proposal to undo, read again under lock.
+
+    Returns:
+        The undone proposal.
+
+    Raises:
+        InvalidTransition: When the proposal is not applied or reassigned. Errors of
+            reverse_payment propagate, for example for a voided invoice.
+    """
+    require_permission(principal, Permission.RECONCILIATION_WRITE)
+    require_permission(principal, Permission.INVOICES_WRITE)
+    locked, txs, _ = _lock_proposal_rows(proposal)
+    if locked.state not in (MatchProposal.State.APPLIED, MatchProposal.State.REASSIGNED):
+        raise InvalidTransition(f"the proposal is {locked.state}, it cannot be undone")
+    # Locked up front, in key order: a concurrent direct reverse_payment holds its payment and
+    # then waits for an invoice, so taking invoices first from payment one could deadlock with it.
+    payments = list(
+        Payment.objects.select_for_update()
+        .filter(pk__in=[tx.payment_id for tx in txs if tx.payment_id is not None])
+        .order_by("pk")
+    )
+    details = [_payment_snapshot(payment) for payment in payments]
+    before: dict[str, Any] = {
+        "state": locked.state,
+        "decided_by_id": locked.decided_by_id,
+        "decided_at": locked.decided_at.isoformat() if locked.decided_at else None,
+        "payment_ids": [payment.pk for payment in payments],
+        "invoice_ids": sorted({a["invoice_id"] for d in details for a in d["allocations"]}),
+        "payments": details,
+    }
+    for payment in payments:
+        reverse_payment(principal, payment)
+    locked.state = MatchProposal.State.UNDONE
+    locked.decided_at = timezone.now()
+    locked.decided_by_id = principal.user_id if principal else None
+    locked.save(update_fields=["state", "decided_at", "decided_by"])
+    record_event(
+        principal,
+        "reconciliation.proposal_undone",
+        "match_proposal",
+        locked.pk,
+        before,
+        {"state": MatchProposal.State.UNDONE},
+    )
+    return locked

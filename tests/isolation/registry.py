@@ -584,6 +584,7 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.services.save_series",
         "billing.services.delete_series",
         "billing.services.record_payment",
+        "billing.services.reverse_payment",
         "billing.services.send_invoice",
         "reconciliation.services.create_import",
         "reconciliation.services.save_bank_account",
@@ -591,6 +592,7 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "reconciliation.services.accept_proposal",
         "reconciliation.services.reject_proposal",
         "reconciliation.services.reassign_proposal",
+        "reconciliation.services.undo_proposal",
     }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.

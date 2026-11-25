@@ -33,6 +33,7 @@ from billing.services import (
     issue_invoice,
     record_event,
     record_payment,
+    reverse_payment,
     save_customer,
     save_draft,
     save_product,
@@ -56,6 +57,7 @@ from reconciliation.services import (
     reject_proposal,
     run_reconciliation,
     save_bank_account,
+    undo_proposal,
 )
 from tenancy.context import TenantMismatch, tenant_context
 from tenancy.models import Tenant
@@ -742,6 +744,32 @@ def test_a_principal_of_a_cannot_record_a_payment_while_b_is_current(
         assert Invoice.objects.get().status == Invoice.Status.ISSUED
 
 
+def test_b_cannot_reverse_a_payment_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, A's payment is not found, and A's principal is refused; A's data is unchanged.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    complete_issuer(a, b)
+    with tenant_context(a.pk):
+        invoice = issued_for(a)
+        payment = record_payment(
+            owner_of(a),
+            Payment(amount=100, currency=Currency.USD, value_date=date(2026, 6, 15)),
+            [(invoice, 100)],
+        )
+    with tenant_context(b.pk):
+        with pytest.raises(Payment.DoesNotExist):
+            reverse_payment(owner_of(b), payment)
+        with pytest.raises(PermissionDenied):
+            reverse_payment(owner_of(a), payment)
+    with tenant_context(a.pk):
+        assert Invoice.objects.get(pk=invoice.pk).status == Invoice.Status.PAID
+        assert Payment.objects.count() == 1 and PaymentAllocation.objects.count() == 1
+        assert not AuditEvent.objects.filter(action="invoice.payment_reversed").exists()
+
+
 def test_b_cannot_email_an_invoice_of_a(tenants: tuple[Tenant, Tenant]) -> None:
     """Under B, A's issued invoice is not found and no request is stored.
 
@@ -955,3 +983,26 @@ def test_a_proposal_of_a_cannot_be_reassigned_to_an_invoice_of_b(
     with tenant_context(b.pk):
         assert Invoice.objects.get(pk=invoice_of_b.pk).status == Invoice.Status.ISSUED
         assert not Payment.objects.exists()
+
+
+def test_b_cannot_undo_a_proposal_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, A's applied proposal is not found, A's principal is refused, nothing changes.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    proposal, invoice = proposal_of(a)
+    with tenant_context(a.pk):
+        accept_proposal(owner_of(a), proposal)
+    with tenant_context(b.pk):
+        with pytest.raises(MatchProposal.DoesNotExist):
+            undo_proposal(owner_of(b), proposal)
+        with pytest.raises(PermissionDenied):
+            undo_proposal(owner_of(a), proposal)
+    with tenant_context(a.pk):
+        assert MatchProposal.objects.get(pk=proposal.pk).state == MatchProposal.State.APPLIED
+        assert Invoice.objects.get(pk=invoice.pk).status == Invoice.Status.PAID
+        assert Payment.objects.count() == 1
+        assert not AuditEvent.objects.filter(action__endswith="_undone").exists()
+        assert not AuditEvent.objects.filter(action="invoice.payment_reversed").exists()
