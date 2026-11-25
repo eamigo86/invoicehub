@@ -9,6 +9,9 @@ from django.core import mail
 from billing.models import AuditEvent, Customer, Invoice, InvoiceEmail
 from billing.services import DraftLine, issue_invoice, save_draft, send_invoice
 from billing.tasks import render_invoice_pdf, send_invoice_email
+from reconciliation.models import BankAccount, BankStatementImport, BankTransaction
+from reconciliation.services import create_import
+from reconciliation.tasks import import_statement
 from tenancy.context import tenant_context
 from tenancy.models import Tenant
 from tenancy.permissions import Permission, Principal
@@ -71,3 +74,27 @@ def test_b_cannot_send_the_email_request_of_a() -> None:
         assert (stored.status, stored.pdf.name) == (Invoice.Status.ISSUED, "")
         assert InvoiceEmail.objects.get().sent_at is None
         assert not AuditEvent.objects.filter(action="invoice.sent").exists()
+
+
+def test_b_cannot_run_the_import_of_a() -> None:
+    """Under B, A's import is not found: it stays pending and no transaction is created."""
+    a = Tenant.objects.create(name="A")
+    b = Tenant.objects.create(name="B")
+    principal = Principal(a.pk, frozenset(Permission))
+    with tenant_context(a.pk):
+        account = BankAccount.objects.create(
+            name="Chase",
+            account_identifier="1234",
+            date_column="Date",
+            amount_column="Amount",
+            description_column="Memo",
+        )
+        row = create_import(principal, account, b"Date,Amount,Memo\n01/31/2026,10.00,Rent\n")
+    with pytest.raises(BankStatementImport.DoesNotExist):
+        import_statement(str(b.pk), str(row.pk))
+    with tenant_context(a.pk):
+        stored = BankStatementImport.objects.get(pk=row.pk)
+        assert (stored.status, stored.completed_at) == (BankStatementImport.Status.PENDING, None)
+        assert not BankTransaction.objects.exists()
+    with tenant_context(b.pk):
+        assert not BankTransaction.objects.exists()

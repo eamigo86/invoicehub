@@ -497,6 +497,7 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.services.delete_series",
         "billing.services.record_payment",
         "billing.services.send_invoice",
+        "reconciliation.services.create_import",
     }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.
@@ -518,7 +519,11 @@ def project_task_names(celery_app: Celery) -> list[str]:
 
 
 TASK_ISOLATION_CASES: frozenset[str] = frozenset(
-    {"billing.tasks.render_invoice_pdf", "billing.tasks.send_invoice_email"}
+    {
+        "billing.tasks.render_invoice_pdf",
+        "billing.tasks.send_invoice_email",
+        "reconciliation.tasks.import_statement",
+    }
 )
 """Names of the Celery tasks that have isolation cases; add every new task here.
 

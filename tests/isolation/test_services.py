@@ -3,6 +3,7 @@
 import uuid
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -40,6 +41,8 @@ from billing.services import (
     update_issuer,
 )
 from core.models import Currency
+from reconciliation.models import BankAccount, BankStatementImport
+from reconciliation.services import create_import
 from tenancy.context import TenantMismatch, tenant_context
 from tenancy.models import Tenant
 from tenancy.permissions import Permission, Principal
@@ -763,3 +766,30 @@ def test_a_principal_of_a_cannot_email_while_b_is_current(
         with pytest.raises(PermissionDenied):
             send_invoice(owner_of(a), issued, "k")
         assert not InvoiceEmail.objects.exists()
+
+
+def test_b_cannot_import_a_statement_into_an_account_of_a(
+    tenants: tuple[Tenant, Tenant], media_root: Path
+) -> None:
+    """Under B, A's bank account is not found: no import, no file, nothing for A either.
+
+    Args:
+        tenants: Tenants A and B.
+        media_root: Temporary media directory.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        account = BankAccount.objects.create(
+            name="Chase",
+            account_identifier="1234",
+            date_column="Date",
+            amount_column="Amount",
+            description_column="Memo",
+        )
+    with tenant_context(b.pk), pytest.raises(BankAccount.DoesNotExist):
+        create_import(owner_of(b), account, b"Date,Amount,Memo\n")
+    with tenant_context(b.pk):
+        assert not BankStatementImport.objects.exists()
+    with tenant_context(a.pk):
+        assert not BankStatementImport.objects.exists()
+    assert not media_root.exists()
