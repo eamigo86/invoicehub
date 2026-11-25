@@ -298,7 +298,7 @@ class InvoiceLine(TenantModel):
     Attributes:
         invoice: Invoice the line belongs to.
         position: Order of the line within the invoice.
-        product: Catalog entry the line was prefilled from, if any.
+        product: Catalog entry the line was prefilled from, if any; protected against deletion.
         description: What is being charged.
         quantity: Amount of units, with up to three decimals.
         unit_price: Price of one unit in cents.
@@ -309,7 +309,7 @@ class InvoiceLine(TenantModel):
 
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name="lines")
     position = models.PositiveSmallIntegerField()
-    product = models.ForeignKey(Product, null=True, blank=True, on_delete=models.SET_NULL)
+    product = models.ForeignKey(Product, null=True, blank=True, on_delete=models.PROTECT)
     description = models.CharField(max_length=500)
     quantity = models.DecimalField(
         max_digits=12, decimal_places=3, validators=[MinValueValidator(0)]
@@ -341,18 +341,19 @@ class InvoiceLine(TenantModel):
 class InvoiceLineTax(TenantModel):
     """A tax applied to a line, with the name and rate copied from the configured tax rate.
 
-    The snapshot keeps the invoice stable when the tax rate is later edited or deleted.
+    The snapshot keeps the invoice stable when the tax rate is later edited. A rate used by a line
+    tax cannot be deleted.
 
     Attributes:
         line: Line the tax applies to.
-        tax_rate: The configured rate it came from, cleared if that rate is deleted.
+        tax_rate: The configured rate it came from, protected against deletion.
         name: Name of the rate when the tax was calculated.
         rate_bp: Rate in basis points when the tax was calculated.
         amount: Tax on the line net, in cents.
     """
 
     line = models.ForeignKey(InvoiceLine, on_delete=models.CASCADE, related_name="taxes")
-    tax_rate = models.ForeignKey(TaxRate, null=True, blank=True, on_delete=models.SET_NULL)
+    tax_rate = models.ForeignKey(TaxRate, null=True, blank=True, on_delete=models.PROTECT)
     name = models.CharField(max_length=100)
     rate_bp = models.PositiveIntegerField()
     amount = models.BigIntegerField()

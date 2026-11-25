@@ -137,6 +137,8 @@ def save_tax_rate(principal: Principal | None, tax_rate: TaxRate) -> TaxRate:
 def delete_tax_rate(principal: Principal | None, tax_rate: TaxRate) -> None:
     """Delete a tax rate.
 
+    A rate used on an invoice line tax cannot be deleted, and Django raises ProtectedError.
+
     Args:
         principal: Acting principal, who needs settings:manage or PermissionDenied is raised.
         tax_rate: Tax rate to remove.
@@ -179,6 +181,8 @@ def save_product(
 
 def delete_product(principal: Principal | None, product: Product) -> None:
     """Delete a product together with its default tax links.
+
+    A product used on an invoice line cannot be deleted, and Django raises ProtectedError.
 
     Args:
         principal: Acting principal, who needs invoices:write or PermissionDenied is raised.
