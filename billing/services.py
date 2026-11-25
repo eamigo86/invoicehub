@@ -2,13 +2,17 @@
 
 Views, the admin and later the API call these functions, so audit logging and business rules
 have a single place to live.
+
+Cross-tenant references are refused by validation: full_clean checks a foreign key through the
+related model's base manager, which Row-Level Security limits to the current tenant, so a row of
+another tenant raises ValidationError.
 """
 
 from django.core.exceptions import PermissionDenied
 
-from billing.models import Customer
+from billing.models import Customer, TaxRate
 from tenancy.context import require_current_tenant_id
-from tenancy.models import Tenant
+from tenancy.models import Tenant, TenantModel
 from tenancy.permissions import Permission, Principal, require_permission
 
 ISSUER_FIELDS = [
@@ -76,3 +80,43 @@ def delete_customer(principal: Principal | None, customer: Customer) -> None:
     """
     require_permission(principal, Permission.INVOICES_WRITE)
     customer.delete()
+
+
+def _clean(row: TenantModel) -> None:
+    """Validate a row of the current tenant, uniqueness within the tenant included.
+
+    Args:
+        row: Row to validate, which receives the current tenant when it has none.
+    """
+    if row.tenant_id is None:
+        row.tenant_id = require_current_tenant_id()
+    row.full_clean()
+
+
+def save_tax_rate(principal: Principal | None, tax_rate: TaxRate) -> TaxRate:
+    """Create or update a tax rate of the current tenant.
+
+    The tax rate is validated first, so ValidationError is raised for invalid data.
+
+    Args:
+        principal: Acting principal, who needs settings:manage or PermissionDenied is raised.
+        tax_rate: Tax rate to persist.
+
+    Returns:
+        The saved tax rate.
+    """
+    require_permission(principal, Permission.SETTINGS_MANAGE)
+    _clean(tax_rate)
+    tax_rate.save()
+    return tax_rate
+
+
+def delete_tax_rate(principal: Principal | None, tax_rate: TaxRate) -> None:
+    """Delete a tax rate.
+
+    Args:
+        principal: Acting principal, who needs settings:manage or PermissionDenied is raised.
+        tax_rate: Tax rate to remove.
+    """
+    require_permission(principal, Permission.SETTINGS_MANAGE)
+    tax_rate.delete()

@@ -16,6 +16,7 @@ from django.urls import reverse
 from accounts.models import User
 from tenancy.context import tenant_context
 from tenancy.models import Membership, Tenant, TenantModel
+from tenancy.permissions import Permission
 from tests.isolation.registry import ADMIN_MARKER_FIELDS, FACTORIES
 
 pytestmark = [pytest.mark.isolation, pytest.mark.django_db(transaction=True)]
@@ -88,6 +89,19 @@ class Scenario:
         user = User.objects.create_superuser(f"{role}-user", f"{role}@example.com", "pw")
         Membership.objects.create(user=user, tenant=tenant, role=role)
         self.client.force_login(user)
+
+    def writer_role(self) -> Membership.Role:
+        """Pick the least privileged role that holds the admin's write permission.
+
+        Returns:
+            Admin for admins that need settings:manage, otherwise accountant.
+        """
+        needed = admin.site._registry[self.model].write_permission  # type: ignore[attr-defined]
+        return (
+            Membership.Role.ADMIN
+            if needed == Permission.SETTINGS_MANAGE
+            else Membership.Role.ACCOUNTANT
+        )
 
     def url(self, kind: str, row: TenantModel | None = None) -> str:
         """Build an admin URL of the model.
@@ -264,13 +278,13 @@ def test_viewer_can_view_but_not_write(scenario: Scenario) -> None:
     assert scenario.snapshot(scenario.a, scenario.a_row) == before
 
 
-def test_accountant_can_write(scenario: Scenario) -> None:
-    """An accountant keeps full access to the admin of the tenant model.
+def test_a_writer_can_write(scenario: Scenario) -> None:
+    """A role holding the admin's write permission keeps full access to the tenant model.
 
     Args:
         scenario: Admin scenario for one tenant model.
     """
-    scenario.login_as(Membership.Role.ACCOUNTANT, scenario.a)
+    scenario.login_as(scenario.writer_role(), scenario.a)
     scenario.activate(scenario.a.pk)
     assert scenario.client.get(scenario.url("add")).status_code == 200
     scenario.client.post(scenario.url("delete", scenario.a_row), {"post": "yes"})

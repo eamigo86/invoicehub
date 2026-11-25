@@ -17,7 +17,7 @@ from django.apps.registry import Apps
 from django.db import models
 from django.urls import URLPattern, URLResolver
 
-from billing.models import Customer
+from billing.models import Customer, TaxRate
 from tenancy.models import ApiToken, Membership, Tenant, TenantModel
 
 
@@ -31,9 +31,22 @@ def make_customer() -> TenantModel:
     return customer
 
 
-FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {Customer: make_customer}
+def make_tax_rate() -> TenantModel:
+    """Create one tax rate for the active tenant.
 
-ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {Customer: "name"}
+    Returns:
+        The saved tax rate.
+    """
+    tax_rate: TenantModel = TaxRate.objects.create(name=f"rate-{uuid.uuid4().hex[:8]}", rate_bp=825)
+    return tax_rate
+
+
+FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {
+    Customer: make_customer,
+    TaxRate: make_tax_rate,
+}
+
+ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {Customer: "name", TaxRate: "name"}
 """Plain text field of each model's admin form that the isolation tests overwrite with a marker.
 
 Every other form value comes from the admin's own change form, so the POST stays valid."""
@@ -206,6 +219,8 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.services.save_customer",
         "billing.services.delete_customer",
         "billing.services.update_issuer",
+        "billing.services.save_tax_rate",
+        "billing.services.delete_tax_rate",
     }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.
