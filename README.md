@@ -6,14 +6,28 @@
 **Multi-tenant invoicing for small businesses — invoices, bank reconciliation and an AI assistant —
 with each company's data isolated by PostgreSQL Row-Level Security.**
 
+## Try it
+
+With Docker and `make`:
+
+```bash
+git clone https://github.com/eamigo86/invoicehub.git && cd invoicehub
+make demo
+```
+
+In about two minutes this starts the stack, seeds a demo company with fictitious US invoices,
+imports a bank statement built from them and reconciles it in the Celery worker. It prints the
+admin URL and the demo login (local use only). The review queue holds a suggested and an ambiguous
+match; the statement itself is in `media/demo/bank_statement.csv`.
+
 ## At a glance
 
 | Area | What it does | Status |
 | --- | --- | --- |
 | Tenant isolation | Every query is scoped twice: by the application and by Row-Level Security. An isolation suite runs as its own CI gate | Done |
 | Accounts and roles | Email login with mandatory verification (django-allauth), owner/admin/accountant/viewer roles, hashed and revocable per-tenant API tokens with scopes | Done |
-| Billing | Invoices and credit notes with gap-free numbering, PDFs, email delivery, configurable sales tax rates | Next |
-| Reconciliation | CSV bank statements matched to invoices with [remitmatch](docs/rfc/0001-remitmatch.md), with a review queue for ambiguous matches | Planned |
+| Billing | Invoices and credit notes with gap-free numbering, PDFs, email delivery, configurable sales tax rates | Done |
+| Reconciliation | CSV bank statements matched to invoices with [remitmatch](docs/rfc/0001-remitmatch.md), with a review queue for ambiguous matches | Done |
 | Integrations | GraphQL API for integrators (django-graphex) and an MCP server for agents | Planned |
 | AI assistant | Drafts invoices and reminders, answers questions about the business, explains ambiguous matches; evals in CI | Planned |
 
@@ -80,7 +94,8 @@ one. Tenant models stay hidden in the admin until a company is active.
 
 ### Ports
 
-Override them with environment variables or a `.env` file.
+They listen on 127.0.0.1 only, so the demo login and the databases stay on this machine. Override
+the ports with environment variables or a `.env` file.
 
 | Service | URL / port | Variable |
 | --- | --- | --- |
