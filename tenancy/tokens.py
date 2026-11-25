@@ -45,7 +45,8 @@ def issue_token(
         scopes: Scopes to grant, a non-empty subset of the token scopes.
         created_by: User who asks for the token, kept for audit.
         allow_introspection: Whether this is a development token, which may read the GraphQL
-            schema even when DEBUG is off.
+            schema even when DEBUG is off. Introspection is disabled in production except for
+            development tokens, so never expose this argument on a tenant-facing path.
 
     Returns:
         The stored token and its plaintext, which is never available again.
