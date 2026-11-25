@@ -38,6 +38,12 @@ def test_the_rfc_overdue_query_is_within_the_limits() -> None:
     assert post(NESTED, token).status_code == 200
 
 
+def test_a_full_page_of_the_rfc_query_is_within_the_limits() -> None:
+    """The largest page the API serves, with the same nesting, is still accepted."""
+    _, token = make_world("A", ["invoices:read"])
+    assert post(NESTED.replace("first: 50", "first: 100"), token).status_code == 200
+
+
 def test_a_query_deeper_than_the_limit_is_a_client_error(settings: Any) -> None:
     """Over-deep nesting is a 400 with a depth message, not an internal error.
 
