@@ -639,6 +639,11 @@ GRAPHQL_ISOLATION_CASES: frozenset[str] = frozenset(
         "Mutation.saveCustomer",
         "Mutation.saveDraft",
         "Mutation.deleteDraft",
+        "Mutation.issueInvoice",
+        "Mutation.sendInvoice",
+        "Mutation.draftCreditNote",
+        "Mutation.acceptMatch",
+        "Mutation.rejectMatch",
     }
 )
 """Query and Mutation fields that have isolation cases; add every new root field here.

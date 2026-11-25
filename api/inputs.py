@@ -114,7 +114,29 @@ class DraftInvoiceInput(InputType):
     _check_customer = field_validator("customer_id")(_row_id)
 
 
-class DraftReference(BaseModel):
-    """The id argument of deleteDraft, which is validated like the id of a draft input."""
+class UuidReference(BaseModel):
+    """The id argument of a mutation on one invoice or match proposal, both keyed by UUID."""
 
     id: uuid.UUID
+
+
+class SendInvoiceInput(InputType):
+    """A request to email an issued invoice; repeating the key never sends a second email.
+
+    Without recipients the email goes to the addresses frozen on the invoice.
+    """
+
+    id: InvoiceId
+    idempotency_key: Annotated[str, Field(min_length=1, max_length=200)]
+    recipients: list[str] | None = None
+
+    _check_id = field_validator("id")(_invoice_id)
+
+
+class CreditNoteInput(InputType):
+    """A credit note for an issued invoice; without lines it credits the whole invoice."""
+
+    invoice_id: InvoiceId
+    lines: list[DraftLineInput] | None = None
+
+    _check_invoice = field_validator("invoice_id")(_invoice_id)

@@ -1,18 +1,32 @@
 """The GraphQL endpoint never shows a token the rows of another tenant."""
 
 import json
+from unittest.mock import MagicMock
 
 import pytest
 from django.test import Client
 
 from accounts.models import User
-from billing.models import Customer, Invoice, Payment, Product, TaxRate
+from billing.models import Customer, Invoice, InvoiceEmail, Payment, Product, TaxRate
 from core.models import Currency
 from reconciliation.models import MatchProposal, ReconciliationRun
 from tenancy.context import tenant_context
 from tenancy.models import Membership, Tenant, TenantModel
 from tenancy.permissions import Principal
 from tenancy.tokens import issue_token
+from tests.test_api_actions import (
+    ACCEPT,
+    ALL_SCOPES,
+    CREDIT,
+    ISSUE,
+    REJECT,
+    SEND,
+    draft_for,
+    issued_invoice,
+    pending_proposal,
+    state_of,
+)
+from tests.test_api_actions import make_world as make_issuer_world
 from tests.test_api_graphql import make_world as make_invoice_world
 from tests.test_api_mutations import DELETE_DRAFT, SAVE_CUSTOMER, SAVE_DRAFT, catalog
 from tests.test_api_mutations import run as mutate
@@ -249,3 +263,73 @@ def test_a_cannot_delete_the_draft_of_b_by_id() -> None:
     assert [(e["code"], e["field"]) for e in data["errors"]] == [("NOT_FOUND", "id")]
     with tenant_context(tenant_b.pk):
         assert Invoice.objects.filter(pk=draft_b.pk).exists()
+
+
+def two_issuers() -> tuple[tuple[Tenant, str], tuple[Tenant, str]]:
+    """Create tenants A and B with complete issuer details and tokens that read and write.
+
+    Returns:
+        Each tenant with its plaintext token, A first.
+    """
+    a, b = (make_issuer_world(name, ["invoices:read", "invoices:write"]) for name in ("A", "B"))
+    return a, b
+
+
+def test_a_cannot_issue_the_draft_of_b_by_id() -> None:
+    """Mutation.issueInvoice with B's draft id is NOT_FOUND and B's draft stays a draft."""
+    (_, token_a), (tenant_b, token_b) = two_issuers()
+    draft_b = draft_for(tenant_b, token_b)
+    data = mutate(ISSUE, token_a, id=draft_b)["issueInvoice"]
+    assert data["invoice"] is None
+    assert [(e["code"], e["field"]) for e in data["errors"]] == [("NOT_FOUND", "id")]
+    with tenant_context(tenant_b.pk):
+        stored = Invoice.objects.get(pk=draft_b)
+        assert (stored.status, stored.reference) == (Invoice.Status.DRAFT, "")
+
+
+def test_a_cannot_send_the_invoice_of_b_by_id(enqueued_email: MagicMock) -> None:
+    """Mutation.sendInvoice with B's invoice id is NOT_FOUND, stores no request, sends no email.
+
+    Args:
+        enqueued_email: Mock standing in for the email task delay.
+    """
+    (tenant_a, token_a), (tenant_b, token_b) = two_issuers()
+    invoice_b = issued_invoice(tenant_b, token_b)
+    request = {"id": invoice_b, "idempotencyKey": "k", "recipients": ["x@buyer.test"]}
+    data = mutate(SEND, token_a, input=request)["sendInvoice"]
+    assert [(e["code"], e["field"]) for e in data["errors"]] == [("NOT_FOUND", "id")]
+    enqueued_email.assert_not_called()
+    for tenant in (tenant_a, tenant_b):
+        with tenant_context(tenant.pk):
+            assert not InvoiceEmail.objects.exists()
+
+
+def test_a_cannot_draft_a_credit_note_for_the_invoice_of_b() -> None:
+    """Mutation.draftCreditNote with B's invoice id is NOT_FOUND and no credit note appears."""
+    (tenant_a, token_a), (tenant_b, token_b) = two_issuers()
+    invoice_b = issued_invoice(tenant_b, token_b)
+    data = mutate(CREDIT, token_a, input={"invoiceId": invoice_b})["draftCreditNote"]
+    assert data["creditNote"] is None
+    assert [(e["code"], e["field"]) for e in data["errors"]] == [("NOT_FOUND", "invoiceId")]
+    for tenant in (tenant_a, tenant_b):
+        with tenant_context(tenant.pk):
+            assert not Invoice.objects.filter(kind=Invoice.Kind.CREDIT_NOTE).exists()
+
+
+@pytest.mark.parametrize(("query", "root"), [(ACCEPT, "acceptMatch"), (REJECT, "rejectMatch")])
+def test_a_cannot_decide_the_proposal_of_b(query: str, root: str) -> None:
+    """Mutation.acceptMatch and rejectMatch with B's proposal id are NOT_FOUND, B's stays pending.
+
+    Args:
+        query: Mutation document under test.
+        root: Mutation field under test.
+    """
+    tenant_a, token_a, proposal_a = pending_proposal("A", ALL_SCOPES)
+    tenant_b, _, proposal_b = pending_proposal("B", ALL_SCOPES)
+    data = mutate(query, token_a, id=str(proposal_b.pk))[root]
+    assert data["proposal"] is None
+    assert [(e["code"], e["field"]) for e in data["errors"]] == [("NOT_FOUND", "id")]
+    assert state_of(tenant_b, proposal_b) == "pending"
+    assert state_of(tenant_a, proposal_a) == "pending"
+    with tenant_context(tenant_b.pk):
+        assert not Payment.objects.filter(source=Payment.Source.BANK).exists()
