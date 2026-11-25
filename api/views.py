@@ -3,8 +3,11 @@
 from typing import Any
 
 from django.conf import settings
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
+from django.shortcuts import render
+from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_safe
 from django_graphex.security import DisableIntrospectionMiddleware
 from django_graphex.views import GraphQLView
 
@@ -66,3 +69,32 @@ def graphql(request: HttpRequest) -> HttpResponse:
         return response
     result: HttpResponse = _graphql(request)
     return result
+
+
+@require_safe
+def graphiql(request: HttpRequest) -> HttpResponse:
+    """Serve the GraphiQL explorer with the public demo token prefilled.
+
+    The page needs no login and holds no tenant data: it only carries the demo token, which
+    is public by design and limited to the invoices:read scope of the demo tenant. GraphQL
+    requests still go through the token-only endpoint.
+
+    Args:
+        request: Incoming request.
+
+    Returns:
+        The explorer page.
+
+    Raises:
+        Http404: When GRAPHIQL_TOKEN is not set, so a deployment without it exposes nothing.
+    """
+    if not settings.GRAPHIQL_TOKEN:
+        raise Http404("GraphiQL is not enabled.")
+    return render(
+        request,
+        "api/graphiql.html",
+        {
+            "endpoint": reverse("api:graphql"),
+            "headers": {"Authorization": f"Bearer {settings.GRAPHIQL_TOKEN}"},
+        },
+    )

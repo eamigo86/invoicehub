@@ -522,11 +522,13 @@ def project_url_names(
     return names
 
 
-URL_ISOLATION_CASES: frozenset[str] = frozenset({"tenancy:list", "tenancy:select", "api:graphql"})
+URL_ISOLATION_CASES: frozenset[str] = frozenset(
+    {"tenancy:list", "tenancy:select", "api:graphql", "api:graphiql"}
+)
 """Names of the project URLs that have isolation cases; add every new project URL name here.
 
-The cases for the tenancy URLs are in test_tenant_selection, those of api:graphql in
-test_graphql."""
+The cases for the tenancy URLs are in test_tenant_selection, those of api:graphql and
+api:graphiql in test_graphql."""
 
 
 def project_service_functions(

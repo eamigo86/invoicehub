@@ -6,4 +6,7 @@ from api import views
 
 app_name = "api"
 
-urlpatterns = [path("graphql/", views.graphql, name="graphql")]
+urlpatterns = [
+    path("graphql/", views.graphql, name="graphql"),
+    path("graphiql/", views.graphiql, name="graphiql"),
+]

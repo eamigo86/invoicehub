@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from django.test import Client
+from django.urls import reverse
 
 from accounts.models import User
 from billing.models import Customer, Invoice, InvoiceEmail, Payment, Product, TaxRate
@@ -82,6 +83,25 @@ def test_the_token_of_a_sees_only_the_invoices_of_a() -> None:
     token_a = tenant_with_token("A")
     body = run(QUERY, token_a)
     assert body == {"data": {"invoices": {"totalCount": 1, "results": [{"reference": "A"}]}}}
+
+
+def test_the_graphiql_token_of_a_never_reads_b_and_the_page_shows_no_tenant_data(
+    settings: Any,
+) -> None:
+    """The explorer page carries only the token of A; through it B's rows stay out of reach.
+
+    Args:
+        settings: Pytest-django settings fixture.
+    """
+    token_b = tenant_with_token("B")
+    token_a = tenant_with_token("A")
+    settings.GRAPHIQL_TOKEN = token_a
+    page = Client().get(reverse("api:graphiql")).content.decode()
+    assert token_b not in page
+    assert "customer of" not in page
+    assert run(QUERY, token_a) == {
+        "data": {"invoices": {"totalCount": 1, "results": [{"reference": "A"}]}}
+    }
 
 
 def test_the_query_takes_no_tenant_argument() -> None:
