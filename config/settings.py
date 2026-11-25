@@ -38,6 +38,9 @@ CACHES = {
         "LOCATION": env("CACHE_URL", default="redis://localhost:6390/1"),
     }
 }
+GRAPHIQL_TOKEN: str = env("GRAPHIQL_TOKEN", default="")
+# Demo only. The public read-only token that the GraphiQL page at /graphiql/ sends; empty turns
+# the page off. seed_demo creates the matching token for the demo tenant.
 GRAPHQL_RATE_LIMIT_PER_MINUTE: int = env.int("GRAPHQL_RATE_LIMIT_PER_MINUTE", default=600)
 
 MAILERS = build_mailers(env("EMAIL_URL", default="consolemail://"))

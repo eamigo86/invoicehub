@@ -11,7 +11,8 @@ DUMP = (
     "import json, django; from django.conf import settings; "
     "print(json.dumps({'db': settings.DATABASES['default'], 'debug': settings.DEBUG, "
     "'role': settings.DATABASE_APP_ROLE, 'tz': settings.TIME_ZONE, 'tzon': settings.USE_TZ, "
-    "'user_model': settings.AUTH_USER_MODEL, 'mailers': settings.MAILERS}, default=str))"
+    "'user_model': settings.AUTH_USER_MODEL, 'mailers': settings.MAILERS, "
+    "'graphiql': settings.GRAPHIQL_TOKEN}, default=str))"
 )
 
 
@@ -69,6 +70,16 @@ def test_defaults_when_optional_values_missing() -> None:
     data = json.loads(result.stdout)
     assert data["debug"] is False
     assert data["role"] == "invoicehub_app"
+    assert data["graphiql"] == ""
+
+
+def test_graphiql_token_comes_from_the_environment() -> None:
+    """GRAPHIQL_TOKEN is read from the environment and is empty by default, which hides GraphiQL."""
+    result = run_settings(
+        {"SECRET_KEY": "k", "DATABASE_URL": "postgres://u:p@h:1/d", "GRAPHIQL_TOKEN": "ih_demo"}
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["graphiql"] == "ih_demo"
 
 
 def test_missing_secret_key_fails() -> None:

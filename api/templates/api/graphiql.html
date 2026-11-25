@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>InvoiceHub GraphiQL</title>
+    <style>body { height: 100%; margin: 0; width: 100%; overflow: hidden; }
+      #graphiql { height: 100vh; }</style>
+    {# Same pinned versions and SRI hashes as the GraphiQL page of django-graphex. #}
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/graphiql@3.7.1/graphiql.min.css"
+      integrity="sha384-Mq3vbRBY71jfjQAt/DcjxUIYY33ksal4cgdRt9U/hNPvHBCaT2JfJ/PTRiPKf0aM"
+      crossorigin="anonymous"
+    />
+  </head>
+  <body>
+    <div id="graphiql">Loading...</div>
+    <script
+      crossorigin="anonymous"
+      src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"
+      integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z"
+    ></script>
+    <script
+      crossorigin="anonymous"
+      src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
+      integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1"
+    ></script>
+    <script
+      crossorigin="anonymous"
+      src="https://unpkg.com/graphiql@3.7.1/graphiql.min.js"
+      integrity="sha384-w0cGClNeNvIYIRVmYrv5kmQ6CEat8jJb0XBczOFPeWlVjzeMNJBaoeEcWFD8Gad4"
+    ></script>
+    {{ endpoint|json_script:"graphiql-endpoint" }}
+    {{ headers|json_script:"graphiql-headers" }}
+    <script>
+      const endpoint = JSON.parse(document.getElementById('graphiql-endpoint').textContent);
+      const headers = JSON.parse(document.getElementById('graphiql-headers').textContent);
+      const fetcher = GraphiQL.createFetcher({
+        url: endpoint,
+        headers,
+      });
+      ReactDOM.createRoot(document.getElementById('graphiql')).render(
+        React.createElement(GraphiQL, { fetcher })
+      );
+    </script>
+  </body>
+</html>
