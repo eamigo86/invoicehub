@@ -31,6 +31,7 @@ from billing.services import (
     delete_tax_rate,
     draft_credit_note,
     issue_invoice,
+    list_invoices,
     record_event,
     record_payment,
     reverse_payment,
@@ -1006,3 +1007,36 @@ def test_b_cannot_undo_a_proposal_of_a(tenants: tuple[Tenant, Tenant]) -> None:
         assert Payment.objects.count() == 1
         assert not AuditEvent.objects.filter(action__endswith="_undone").exists()
         assert not AuditEvent.objects.filter(action="invoice.payment_reversed").exists()
+
+
+def test_b_cannot_list_the_invoices_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, the invoice read service returns B's invoices and none of A's.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        a_invoice = Invoice.objects.create(
+            customer=Customer.objects.create(name="A client"), currency=Currency.USD
+        )
+    with tenant_context(b.pk):
+        b_invoice = Invoice.objects.create(
+            customer=Customer.objects.create(name="B client"), currency=Currency.USD
+        )
+        assert list(list_invoices(owner_of(b))) == [b_invoice]
+    with tenant_context(a.pk):
+        assert list(list_invoices(owner_of(a))) == [a_invoice]
+
+
+def test_a_principal_of_a_cannot_list_invoices_while_b_is_current(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """A principal of A is refused under B, even holding every permission.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(b.pk), pytest.raises(PermissionDenied):
+        list_invoices(owner_of(a))
