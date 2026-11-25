@@ -109,8 +109,9 @@ def graphql(url: str, token: str, query: str, variables: dict[str, Any]) -> dict
         The data member of the response.
 
     Raises:
-        ShopError: When the server cannot be reached, answers with an HTTP error such as 401 or
-            429, or reports GraphQL errors.
+        ShopError: When the server cannot be reached or times out, answers with an HTTP error
+            such as 401 or 429, answers with something that is not a GraphQL response, or reports
+            GraphQL errors.
     """
     request = urllib.request.Request(  # noqa: S310 - the endpoint is operator supplied
         url,
@@ -124,10 +125,34 @@ def graphql(url: str, token: str, query: str, variables: dict[str, Any]) -> dict
         raise ShopError(_http_message(error)) from None
     except urllib.error.URLError as error:
         raise ShopError(f"Cannot reach {url}: {error.reason}") from None
+    except TimeoutError:
+        raise ShopError(f"Timed out after {TIMEOUT_SECONDS} seconds waiting for {url}.") from None
+    except ValueError:
+        raise ShopError(f"The answer of {url} is not JSON.") from None
+    if not isinstance(body, dict):
+        raise ShopError(f"The answer of {url} is not a GraphQL response.")
     if body.get("errors"):
-        raise ShopError("GraphQL error: " + "; ".join(e["message"] for e in body["errors"]))
-    data: dict[str, Any] = body["data"]
+        raise ShopError("GraphQL error: " + _messages(body["errors"]))
+    data = body.get("data")
+    if not isinstance(data, dict):
+        raise ShopError("The GraphQL response has no data.")
     return data
+
+
+def _messages(errors: Any) -> str:
+    """Join the messages of a GraphQL errors list, whatever its shape.
+
+    Args:
+        errors: The errors member of a response.
+
+    Returns:
+        The messages separated by semicolons, with a placeholder for an error without one.
+    """
+    if not isinstance(errors, list):
+        return str(errors)
+    return "; ".join(
+        str(e.get("message", "no message")) if isinstance(e, dict) else str(e) for e in errors
+    )
 
 
 def _http_message(error: urllib.error.HTTPError) -> str:
@@ -147,9 +172,9 @@ def _http_message(error: urllib.error.HTTPError) -> str:
         return f"HTTP 429: rate limit exceeded, retry in {wait} seconds."
     try:
         errors = json.load(error)["errors"]
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError, AttributeError):
         return f"HTTP {error.code}: {error.reason}"
-    return "GraphQL error: " + "; ".join(e["message"] for e in errors)
+    return "GraphQL error: " + _messages(errors)
 
 
 def check(payload: dict[str, Any]) -> dict[str, Any]:

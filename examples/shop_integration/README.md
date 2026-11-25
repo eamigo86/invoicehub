@@ -7,8 +7,9 @@ to:
 2. create a draft invoice with `saveDraft`;
 3. issue it with `issueInvoice`, then print the invoice reference and total.
 
-It uses only the Python standard library. Typed errors in mutation payloads, HTTP 401 and 429
-(with `Retry-After`) and GraphQL errors end with a one-line message on stderr and exit status 1.
+It uses only the Python standard library. Typed errors in mutation payloads, HTTP errors such as
+401, 429 (with `Retry-After`) and 5xx, GraphQL errors, timeouts and answers that are not JSON end
+with a one-line message on stderr and exit status 1.
 
 ## Run it against the demo
 
@@ -23,6 +24,10 @@ INVOICEHUB_API_TOKEN="$TOKEN" python3 examples/shop_integration/shop.py
 The endpoint defaults to `http://localhost:8010/graphql/`; change it with `--url` or
 `INVOICEHUB_GRAPHQL_URL`. Prefer the `INVOICEHUB_API_TOKEN` variable to `--token`, which shows up
 in process listings.
+
+The token travels in the `Authorization` header, so use an `https://` endpoint everywhere except
+`localhost`. The script uses `urllib`, which follows redirects, so point it at the final URL: a
+redirect to another host would carry the header along.
 
 The order is fixed. Running the script again finds the existing customer, so it creates no
 duplicate, but it drafts and issues a second invoice for a second order.

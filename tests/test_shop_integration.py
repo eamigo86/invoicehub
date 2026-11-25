@@ -1,6 +1,11 @@
 """The shop example script, run end to end against a live server of the real app."""
 
 import re
+import threading
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 import pytest
@@ -186,3 +191,95 @@ def test_a_missing_token_is_a_usage_error(monkeypatch: pytest.MonkeyPatch) -> No
     with pytest.raises(SystemExit) as stop:
         shop.main([])
     assert stop.value.code == 2
+
+
+@contextmanager
+def serve(status: int, body: bytes, delay: float = 0) -> Iterator[str]:
+    """Serve one canned answer to every POST on a local port.
+
+    Args:
+        status: HTTP status of the answer.
+        body: Body of the answer.
+        delay: Seconds to wait before answering.
+
+    Yields:
+        The GraphQL endpoint of the server, which stops when the generator is closed.
+    """
+
+    class Handler(BaseHTTPRequestHandler):
+        """Answer every POST with the canned response."""
+
+        def do_POST(self) -> None:  # noqa: N802 - the name http.server looks for
+            """Read the request and send the canned response."""
+            self.rfile.read(int(self.headers["Content-Length"]))
+            time.sleep(delay)
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            """Keep the test output quiet.
+
+            Args:
+                format: Log format, unused.
+                *args: Log arguments, unused.
+            """
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/graphql/"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "expected"),
+    [
+        (500, b"<html>boom</html>", "HTTP 500"),
+        (200, b"<html>not json</html>", "not JSON"),
+        (200, b'{"data": null}', "no data"),
+        (200, b'{"errors": [{}]}', "GraphQL error"),
+        (400, b'{"errors": [{}]}', "GraphQL error"),
+        (200, b"[1]", "not a GraphQL response"),
+    ],
+)
+def test_a_broken_answer_is_reported_in_one_line_without_the_token(
+    status: int, body: bytes, expected: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A server error, a body that is not a GraphQL response or an error without a message.
+
+    Args:
+        status: HTTP status of the canned answer.
+        body: Body of the canned answer.
+        expected: Text the error line must contain.
+        capsys: Pytest output capture.
+    """
+    with serve(status, body) as url:
+        assert shop.main(["--url", url, "--token", "ih_secret"]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("Error: ")
+    assert expected in err
+    assert err.count("\n") == 1
+    assert "ih_secret" not in err
+
+
+def test_a_read_timeout_is_reported_in_one_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A server that accepts the request and never answers ends with a short message.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+        capsys: Pytest output capture.
+    """
+    monkeypatch.setattr(shop, "TIMEOUT_SECONDS", 0.2)
+    with serve(200, b"{}", delay=1) as url:
+        assert shop.main(["--url", url, "--token", "ih_secret"]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("Error: ")
+    assert "Timed out" in err
+    assert "ih_secret" not in err
