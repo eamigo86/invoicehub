@@ -1,6 +1,5 @@
 """Proposing matches: the run_reconciliation service and the reconcile_run task."""
 
-from collections.abc import Generator
 from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock
@@ -22,79 +21,12 @@ from reconciliation.models import (
 )
 from reconciliation.services import run_reconciliation
 from reconciliation.tasks import reconcile_run
-from tenancy.context import tenant_context
 from tenancy.models import Tenant
 from tenancy.permissions import Permission, Principal
-from tests.test_payments import issued_invoice, make_tenant, pay
-from tests.test_reconciliation_models import make_account, make_import
+from tests.test_payments import issued_invoice, pay
+from tests.test_reconciliation_models import make_import
 
 pytestmark = pytest.mark.django_db
-
-
-@pytest.fixture
-def tenant() -> Generator[Tenant]:
-    """Create a tenant with issuer details and make it the active one.
-
-    Yields:
-        The tenant.
-    """
-    tenant = make_tenant()
-    with tenant_context(tenant.pk):
-        yield tenant
-
-
-@pytest.fixture
-def user() -> User:
-    """Create the user behind the writer principal.
-
-    Returns:
-        The user.
-    """
-    return User.objects.create_user("ann", "ann@example.com", "pw")
-
-
-@pytest.fixture
-def writer(tenant: Tenant, user: User) -> Principal:
-    """Build a principal that may write invoices and reconciliation data.
-
-    Args:
-        tenant: Active tenant.
-        user: User the principal stands for.
-
-    Returns:
-        The principal.
-    """
-    permissions = frozenset(
-        {Permission.INVOICES_READ, Permission.INVOICES_WRITE, Permission.RECONCILIATION_WRITE}
-    )
-    return Principal(tenant.pk, permissions, user_id=user.pk)
-
-
-@pytest.fixture
-def customer(tenant: Tenant) -> Customer:
-    """Create a customer in the active tenant.
-
-    Args:
-        tenant: Active tenant.
-
-    Returns:
-        The customer.
-    """
-    created: Customer = Customer.objects.create(name="Bolt")
-    return created
-
-
-@pytest.fixture
-def account(tenant: Tenant) -> BankAccount:
-    """Create a bank account in the active tenant.
-
-    Args:
-        tenant: Active tenant.
-
-    Returns:
-        The account.
-    """
-    return make_account()
 
 
 def make_tx(
@@ -285,7 +217,7 @@ class TestReconcileRun:
         run = start(writer)
         proposal = MatchProposal.objects.get()
         assert (proposal.run_id, proposal.kind, proposal.engine_status) == (run.pk, "1:1", "auto")
-        assert proposal.state == MatchProposal.State.PENDING and proposal.residual == 0
+        assert proposal.state == MatchProposal.State.APPLIED and proposal.residual == 0
         assert proposal.breakdown["reference"] == 1.0 and 0 < proposal.score <= 1
         assert list(proposal.transactions.all()) == [tx]
         assert list(proposal.invoices.all()) == [invoice]

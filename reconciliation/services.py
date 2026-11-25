@@ -10,9 +10,20 @@ import hashlib
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
+from billing.models import Invoice, Payment
+from billing.services import InvalidTransition, record_event, record_payment
 from reconciliation import engine
-from reconciliation.models import BankAccount, BankStatementImport, ReconciliationRun
+from reconciliation.models import (
+    BankAccount,
+    BankStatementImport,
+    BankTransaction,
+    MatchProposal,
+    MatchProposalInvoice,
+    MatchProposalTransaction,
+    ReconciliationRun,
+)
 from tenancy.context import require_current_tenant_id
 from tenancy.permissions import Permission, Principal, require_permission
 
@@ -157,3 +168,116 @@ def run_reconciliation(principal: Principal | None) -> ReconciliationRun:
             raise
         return winner
     return run
+
+
+def _lock_proposal_rows(
+    proposal: MatchProposal,
+) -> tuple[MatchProposal, list[BankTransaction], list[Invoice]]:
+    """Lock a proposal and the rows it links, in an order that cannot deadlock.
+
+    Invoices are locked by primary key, as record_payment does, and then sorted by due date.
+
+    Args:
+        proposal: Proposal to lock.
+
+    Returns:
+        The locked proposal, its transactions by value date then key, and its invoices by due
+        date then key.
+    """
+    locked = MatchProposal.objects.select_for_update().get(pk=proposal.pk)
+    txs = list(
+        BankTransaction.objects.select_for_update(of=("self",))
+        .select_related("bank_account")
+        .filter(
+            pk__in=MatchProposalTransaction.objects.filter(proposal=locked).values("transaction_id")
+        )
+        .order_by("value_date", "pk")
+    )
+    invoices = list(
+        Invoice.objects.select_for_update()
+        .filter(pk__in=MatchProposalInvoice.objects.filter(proposal=locked).values("invoice_id"))
+        .order_by("pk")
+    )
+    invoices.sort(key=lambda row: (row.due_date is None, row.due_date, row.pk))
+    return locked, txs, invoices
+
+
+@transaction.atomic
+def _apply_proposal(principal: Principal | None, proposal: MatchProposal) -> list[Payment]:
+    """Record the bank payments of a pending proposal and mark it applied.
+
+    Runs in a savepoint, so any error leaves nothing written and the caller's transaction
+    usable. The proposal, its transactions and its invoices are locked, and balances are read
+    after the lock. Each transaction's amount is allocated to the invoices in due date order,
+    at most the balance still due on each, counting what earlier payments of this proposal
+    already took. One to one and one to many proposals give one payment with all allocations;
+    many to one gives one payment per transaction. A transaction with nothing left to allocate
+    still gets its payment, unallocated, so the bank money is accounted for. Each transaction is
+    linked to its payment, and the event reconciliation.proposal_applied is recorded.
+
+    Args:
+        principal: Acting principal, who needs reconciliation:write and invoices:write, or
+            PermissionDenied is raised. Without a user or token the actor is the system.
+        proposal: Proposal to apply, read again under lock.
+
+    Returns:
+        The payments recorded, in transaction order.
+
+    Raises:
+        InvalidTransition: When the proposal is not pending, a transaction already has a
+            payment, or an invoice is not a payable invoice with a balance due. Errors of
+            record_payment propagate, for example ValidationError on a currency mismatch.
+    """
+    require_permission(principal, Permission.RECONCILIATION_WRITE)
+    locked, txs, invoices = _lock_proposal_rows(proposal)
+    if locked.state != MatchProposal.State.PENDING:
+        raise InvalidTransition(f"the proposal is {locked.state}, it cannot be applied")
+    if any(tx.payment_id is not None for tx in txs):
+        raise InvalidTransition("a transaction of the proposal already has a payment")
+    remaining = {row.pk: row.balance_due() for row in invoices}
+    for row in invoices:
+        if (
+            row.kind != Invoice.Kind.INVOICE
+            or row.status not in Invoice.PAYABLE_STATUSES
+            or remaining[row.pk] <= 0
+        ):
+            raise InvalidTransition(
+                f"an invoice of the proposal is {row.status} or has no balance due"
+            )
+    created: list[Payment] = []
+    for tx in txs:
+        left = tx.amount
+        allocations: list[tuple[Invoice, int]] = []
+        for row in invoices:
+            cents = min(left, remaining[row.pk])
+            if cents > 0:
+                allocations.append((row, cents))
+                left -= cents
+                remaining[row.pk] -= cents
+        payment = record_payment(
+            principal,
+            Payment(
+                amount=tx.amount,
+                currency=tx.bank_account.currency,
+                value_date=tx.value_date,
+                source=Payment.Source.BANK,
+                reference=tx.description[:200],
+            ),
+            allocations,
+        )
+        tx.payment = payment
+        tx.save(update_fields=["payment"])
+        created.append(payment)
+    locked.state = MatchProposal.State.APPLIED
+    locked.decided_at = timezone.now()
+    locked.decided_by_id = principal.user_id if principal else None
+    locked.save(update_fields=["state", "decided_at", "decided_by"])
+    record_event(
+        principal,
+        "reconciliation.proposal_applied",
+        "match_proposal",
+        locked.pk,
+        {"state": MatchProposal.State.PENDING},
+        {"state": MatchProposal.State.APPLIED, "payment_ids": [p.pk for p in created]},
+    )
+    return created

@@ -135,6 +135,7 @@ class BankTransaction(TenantModel):
         description: Text printed by the bank.
         payer: Payer printed by the bank, if any.
         dedupe_hash: SHA-256 identifying the transaction across overlapping statements.
+        payment: Payment this transaction created when a proposal was applied, empty until then.
         created_at: When the transaction was imported.
     """
 
@@ -152,6 +153,13 @@ class BankTransaction(TenantModel):
     description = models.CharField(max_length=DESCRIPTION_MAX_LENGTH)
     payer = models.CharField(max_length=PAYER_MAX_LENGTH, blank=True)
     dedupe_hash = models.CharField(max_length=64)
+    payment = models.ForeignKey(
+        "billing.Payment",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="bank_transactions",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -161,7 +169,12 @@ class BankTransaction(TenantModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["tenant", "dedupe_hash"], name="banktx_tenant_hash_uniq"
-            )
+            ),
+            # A payment backs at most one transaction. A plain one-to-one field would be unique
+            # without the tenant, which the tenancy checks forbid; nulls never collide.
+            models.UniqueConstraint(
+                fields=["tenant", "payment"], name="banktx_tenant_payment_uniq"
+            ),
         ]
 
     def __str__(self) -> str:
@@ -184,6 +197,7 @@ class ReconciliationRun(TenantModel):
         transactions_considered: Bank transactions given to the engine.
         invoices_considered: Open invoices given to the engine.
         auto_count: Proposals the engine marked auto.
+        applied_count: Proposals applied as bank payments by the run itself.
         suggested_count: Proposals the engine marked suggested.
         ambiguous_count: Proposals the engine marked ambiguous.
         unmatched_transactions: Transactions with no proposal.
@@ -213,6 +227,7 @@ class ReconciliationRun(TenantModel):
     transactions_considered = models.PositiveIntegerField(default=0)
     invoices_considered = models.PositiveIntegerField(default=0)
     auto_count = models.PositiveIntegerField(default=0)
+    applied_count = models.PositiveIntegerField(default=0)
     suggested_count = models.PositiveIntegerField(default=0)
     ambiguous_count = models.PositiveIntegerField(default=0)
     unmatched_transactions = models.PositiveIntegerField(default=0)
