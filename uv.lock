@@ -500,6 +500,7 @@ dependencies = [
     { name = "gunicorn" },
     { name = "psycopg", extra = ["binary"] },
     { name = "redis" },
+    { name = "remitmatch" },
     { name = "weasyprint" },
 ]
 
@@ -526,6 +527,7 @@ requires-dist = [
     { name = "gunicorn", specifier = ">=27.0.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.9" },
     { name = "redis", specifier = ">=8.2.0" },
+    { name = "remitmatch", specifier = "==0.1.0a1" },
     { name = "weasyprint", specifier = ">=70.0" },
 ]
 
@@ -874,6 +876,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/10/8a/408dd829367bb62972bd5d91bd8cc283c24c8344f80a880d4b3901ce43fd/redis-8.2.0.tar.gz", hash = "sha256:58b1493d83ba8f0e3ffe6bd781194ca5c01c91267ae03d29c1087b0b3c7d79c9", size = 5809579, upload-time = "2026-11-23T08:31:56.692Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ea/8f/98458650cca985032598a59caca0641e7889cf4d536dc12dc032bef7df47/redis-8.2.0-py3-none-any.whl", hash = "sha256:4ff649f10fae5e7e97798fb2a84e84a0a66e98310d75cad2b5a572ce0f9f15a7", size = 732892, upload-time = "2026-11-23T08:31:55.011Z" },
+]
+
+[[package]]
+name = "remitmatch"
+version = "0.1.0a1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/e4/511dbbe362ccf4c1bbc854f6f34d987ab3983bf8613996f1c2fcc0193e85/remitmatch-0.1.0a1.tar.gz", hash = "sha256:000a63482a40bd6d35fd894defef74d7c6618ccee5426259cd1578426966e00d", size = 67717, upload-time = "2026-11-25T04:29:33.04Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d1/d4/a1bf9c26f24536d23ef69126e9fe8f57555185059d120fe92f2bfa7a8a41/remitmatch-0.1.0a1-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:9d5380880d74e0c1bce5417694f0f92839018f874a079a466031e8e62805e2e5", size = 3731652, upload-time = "2026-11-25T04:29:24.806Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/e9/853bb0c30b474a9c416c41ad06b4b8227b617a98fad66eee6eb5b2d4f3da/remitmatch-0.1.0a1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:85ff4713adf8108a62663146c102282e1f735fd1498d28d2abb0c5b490f46678", size = 3502144, upload-time = "2026-11-25T04:29:26.492Z" },
+    { url = "https://files.pythonhosted.org/packages/71/4f/c98a9893ceee2351606230b7b57bf6d981f814b16b243871df4099bad4c0/remitmatch-0.1.0a1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:0cea1b945d2eb55bf38788eaa45dff968cb93ec7dd549bcc8e2b66db5d83595f", size = 4022587, upload-time = "2026-11-25T04:29:28.39Z" },
+    { url = "https://files.pythonhosted.org/packages/0c/1a/01f9089314e99e65dc425716e66c00cd63143eb658c01c7f2c57f052f026/remitmatch-0.1.0a1-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:179deab855fe4d0d7224be608477a03997139d178387145d0e2a5c3f683a1112", size = 4100866, upload-time = "2026-11-25T04:29:30Z" },
+    { url = "https://files.pythonhosted.org/packages/39/02/3d0d01b699b7acc124e8c3c39ed8caeaac6c71de17a99f5b79d316363df8/remitmatch-0.1.0a1-cp310-abi3-win_amd64.whl", hash = "sha256:f1465a8e6964e42559e00c5b5ba9bf77025a2b301e9fb0c8794a67573580c8e5", size = 3600070, upload-time = "2026-11-25T04:29:31.479Z" },
 ]
 
 [[package]]
