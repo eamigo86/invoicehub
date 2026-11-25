@@ -831,6 +831,89 @@ def record_payment(
     return payment
 
 
+def _payment_snapshot(payment: Payment) -> dict[str, Any]:
+    """Describe a payment and its allocations for an audit event.
+
+    Args:
+        payment: Stored payment to describe.
+
+    Returns:
+        Its id, amount, currency, value date as an ISO string, and the allocations as invoice id
+        and amount, by invoice id.
+    """
+    allocations = payment.allocations.order_by("invoice_id")
+    return {
+        "id": payment.pk,
+        "amount": payment.amount,
+        "currency": payment.currency,
+        "value_date": payment.value_date.isoformat(),
+        "allocations": [
+            {"invoice_id": str(row.invoice_id), "amount": row.amount} for row in allocations
+        ],
+    }
+
+
+@transaction.atomic
+def reverse_payment(principal: Principal | None, payment: Payment) -> None:
+    """Undo a recorded payment: delete it and put its invoices back to what is still paid.
+
+    The payment row is locked, so a payment of another tenant, which Row-Level Security hides,
+    raises Payment.DoesNotExist. Its invoices are locked in primary key order, as record_payment
+    does. Each must be paid or partially paid: a voided or credited invoice is never silently
+    reopened. The payment and its allocations are deleted, and bank transactions that pointed at
+    the payment lose the link. Each invoice is then partially paid when other allocations remain,
+    otherwise sent when an email of it was delivered (sent_at is set), otherwise issued. The
+    status follows the balance first: an invoice that the remaining payments and credit notes
+    still settle stays paid. For each invoice the event invoice.payment_reversed records its
+    status and balance before and after, and the deleted payment with its allocations in the
+    before state. A payment with no allocations produces no invoice event, so the caller is
+    responsible for auditing it. Everything is one transaction, so a refusal writes nothing.
+
+    ponytail: deleting the payment keeps its history only in the audit log. If accounting needs
+    the payment row kept, upgrade to a reversal record instead of a delete.
+
+    Args:
+        principal: Acting principal, who needs invoices:write or PermissionDenied is raised.
+        payment: Payment to reverse, read again under lock.
+
+    Raises:
+        InvalidTransition: When an invoice of the payment is not paid or partially paid.
+    """
+    require_permission(principal, Permission.INVOICES_WRITE)
+    locked = Payment.objects.select_for_update().get(pk=payment.pk)
+    payment_id = locked.pk
+    ids = list(locked.allocations.values_list("invoice_id", flat=True))
+    rows = list(Invoice.objects.select_for_update().filter(pk__in=ids).order_by("pk"))
+    paid = (Invoice.Status.PAID, Invoice.Status.PARTIALLY_PAID)
+    for row in rows:
+        if row.status not in paid:
+            raise InvalidTransition(f"{row.kind} is {row.status}, its payment cannot be reversed")
+    before = {row.pk: (row.status, row.balance_due()) for row in rows}
+    snapshot = _payment_snapshot(locked)
+    locked.delete()
+    for row in rows:
+        balance = row.balance_due()
+        if balance <= 0:
+            row.status = Invoice.Status.PAID
+        elif row.allocations.exists():
+            row.status = Invoice.Status.PARTIALLY_PAID
+        elif InvoiceEmail.objects.filter(invoice=row, sent_at__isnull=False).exists():
+            row.status = Invoice.Status.SENT
+        else:
+            row.status = Invoice.Status.ISSUED
+        if row.status != before[row.pk][0]:
+            _clean(row)
+            row.save(update_fields=["status", "updated_at"])
+        record_event(
+            principal,
+            "invoice.payment_reversed",
+            "invoice",
+            row.pk,
+            {"status": before[row.pk][0], "balance": before[row.pk][1], "payment": snapshot},
+            {"status": row.status, "balance": balance, "payment_id": payment_id},
+        )
+
+
 @transaction.atomic
 def send_invoice(
     principal: Principal | None,
