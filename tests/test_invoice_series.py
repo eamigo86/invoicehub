@@ -12,7 +12,14 @@ from django.test import Client
 import billing.admin
 from accounts.models import User
 from billing.models import Customer, Invoice, InvoiceSeries
-from billing.services import DraftLine, delete_series, issue_invoice, save_draft, save_series
+from billing.services import (
+    DraftLine,
+    delete_series,
+    draft_credit_note,
+    issue_invoice,
+    save_draft,
+    save_series,
+)
 from tenancy.context import tenant_context
 from tenancy.models import Membership, Tenant
 from tenancy.permissions import Permission, Principal
@@ -332,9 +339,15 @@ def test_the_issue_action_takes_documents_in_a_fixed_order(
     with tenant_context(tenant.pk):
         customer = Customer.objects.create(name="Bolt")
         lines = [DraftLine("A", Decimal(1), 5)]
+        base = issue_invoice(
+            Principal(tenant.pk, frozenset({Permission.INVOICES_WRITE})),
+            save_draft(principal, Invoice(customer=customer), lines),
+        )
         drafts = [
-            save_draft(principal, Invoice(customer=customer, kind=kind), lines)
-            for kind in ("invoice", "credit_note", "invoice", "credit_note")
+            save_draft(principal, Invoice(customer=customer), lines),
+            draft_credit_note(principal, base, lines),
+            save_draft(principal, Invoice(customer=customer), lines),
+            draft_credit_note(principal, base, lines),
         ]
     seen: list[Any] = []
     original = issue_invoice

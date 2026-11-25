@@ -16,6 +16,7 @@ from billing.services import (
     DraftLine,
     InvalidTransition,
     delete_draft,
+    draft_credit_note,
     issue_invoice,
     save_draft,
 )
@@ -156,8 +157,8 @@ def test_each_kind_has_its_own_counter(
         monkeypatch: Pytest monkeypatch fixture.
     """
     freeze_now(monkeypatch, FIXED_NOW)
-    issue_invoice(writer, draft(writer, customer))
-    note = issue_invoice(writer, draft(writer, customer, Invoice.Kind.CREDIT_NOTE))
+    original = issue_invoice(writer, draft(writer, customer))
+    note = issue_invoice(writer, draft_credit_note(writer, original))
     assert (note.number, note.reference) == (1, "CN-2026-00001")
     assert InvoiceSeries.objects.count() == 2
 

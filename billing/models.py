@@ -177,6 +177,7 @@ class Invoice(TenantModel):
         kind: Whether this is an invoice or a credit note.
         status: Lifecycle state of the document.
         customer: Who is invoiced.
+        original: The invoice a credit note corrects; empty for an invoice.
         currency: Currency of every amount on the document.
         series: Numbering series the invoice was numbered from, set when issuing.
         number: Position in the series within the year, set when issuing.
@@ -218,6 +219,9 @@ class Invoice(TenantModel):
     kind = models.CharField(max_length=12, choices=Kind, default=Kind.INVOICE)
     status = models.CharField(max_length=14, choices=Status, default=Status.DRAFT)
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
+    original = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="credit_notes"
+    )
     currency = models.CharField(max_length=3, choices=Currency)
     series = models.ForeignKey(
         "InvoiceSeries", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
@@ -243,7 +247,12 @@ class Invoice(TenantModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["tenant", "series", "year", "number"], name="invoice_tenant_number_uniq"
-            )
+            ),
+            models.CheckConstraint(
+                condition=models.Q(kind="credit_note", original__isnull=False)
+                | models.Q(kind="invoice", original__isnull=True),
+                name="invoice_original_matches_kind",
+            ),
         ]
 
     def __str__(self) -> str:

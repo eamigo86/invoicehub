@@ -20,6 +20,7 @@ from typing import Any
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from billing.calculations import LineInput, TaxRateInput, invoice_totals
@@ -459,6 +460,41 @@ def _lock_series(kind: str, local_year: int) -> InvoiceSeries:
     return locked
 
 
+def _credited_total(original: Invoice) -> int:
+    """Add up the totals of the issued credit notes of an invoice.
+
+    Args:
+        original: Invoice whose credit notes are summed.
+
+    Returns:
+        The credited amount in cents.
+    """
+    issued = original.credit_notes.exclude(status=Invoice.Status.DRAFT)
+    total: int = issued.aggregate(total=Sum("total"))["total"] or 0
+    return total
+
+
+def _lock_original(note: Invoice) -> Invoice:
+    """Lock the original of a credit note and check that this note may still be issued.
+
+    InvalidTransition is raised when the original can no longer be credited.
+
+    Args:
+        note: Draft credit note about to be issued.
+
+    Returns:
+        The locked original.
+
+    Raises:
+        ValidationError: When the credits would exceed the total of the original.
+    """
+    original: Invoice = Invoice.objects.select_for_update().get(pk=note.original_id)
+    _require_creditable(original)
+    if _credited_total(original) + note.total > original.total:
+        raise ValidationError("The credit notes would exceed the total of the original invoice.")
+    return original
+
+
 @transaction.atomic
 def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
     """Issue a draft: number it, freeze the issuer and customer details and set its dates.
@@ -473,6 +509,12 @@ def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
     stored so that a later prefix change never alters it. InvalidTransition is raised when the
     invoice is not a draft, and the event invoice.issued is recorded in the audit log. The
     invoice row is locked, so issuing and editing the same draft are serialized.
+
+    Issuing a credit note also locks its original, before the series. ValidationError is raised
+    when the issued credit notes of the original, this one included, would exceed its total, and
+    InvalidTransition when the original can no longer be credited. When the credits reach the
+    total exactly, the original becomes voided and invoice.voided is recorded, all in the same
+    transaction.
 
     Args:
         principal: Acting principal, who needs invoices:write or PermissionDenied is raised.
@@ -496,6 +538,11 @@ def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
     missing = [name for name in REQUIRED_ISSUER_FIELDS if not getattr(tenant, name)]
     if missing:
         raise ValidationError(f"The issuer details are incomplete: {', '.join(missing)}.")
+    original, before_status = None, ""
+    if stored.kind == Invoice.Kind.CREDIT_NOTE:
+        # Locked before the series, so credits of one invoice queue up on it first.
+        original = _lock_original(stored)
+        before_status = original.status
     before = _snapshot(stored)
     series = _lock_series(stored.kind, _local_date(tenant, timezone.now()).year)
     now = timezone.now()
@@ -546,7 +593,99 @@ def issue_invoice(principal: Principal | None, invoice: Invoice) -> Invoice:
     stored.save()
     after = _snapshot(stored) | {"reference": reference}
     record_event(principal, "invoice.issued", "invoice", stored.pk, before, after)
+    if original is not None and _credited_total(original) == original.total:
+        original.status = Invoice.Status.VOIDED
+        original.save(update_fields=["status", "updated_at"])
+        record_event(
+            principal,
+            "invoice.voided",
+            "invoice",
+            original.pk,
+            {"status": before_status},
+            {"status": original.status},
+        )
     return stored
+
+
+CREDITABLE_STATUSES = (
+    Invoice.Status.ISSUED,
+    Invoice.Status.SENT,
+    Invoice.Status.PARTIALLY_PAID,
+    Invoice.Status.PAID,
+)
+"""Statuses of an invoice that can still be corrected with a credit note."""
+
+
+def _require_creditable(original: Invoice) -> None:
+    """Refuse an original that cannot be credited, which includes a voided one.
+
+    Args:
+        original: Stored invoice to check.
+
+    Raises:
+        InvalidTransition: When it is not an invoice in a creditable status.
+    """
+    if original.kind != Invoice.Kind.INVOICE:
+        raise InvalidTransition("only an invoice can be credited, not a credit note")
+    if original.status not in CREDITABLE_STATUSES:
+        raise InvalidTransition(f"invoice is {original.status}, it cannot be credited")
+
+
+@transaction.atomic
+def draft_credit_note(
+    principal: Principal | None, original: Invoice, lines: list[DraftLine] | None = None
+) -> Invoice:
+    """Draft a credit note for an issued invoice, for the full amount or a part of it.
+
+    The credit note is a draft of the same customer and currency, saved through save_draft, so
+    it is issued like any draft and numbered in the credit note series. Amounts are stored
+    positive and the kind gives the sign. Without lines it is a full credit: the lines of the
+    original are copied, each tax with the name and rate it had when the original was drafted,
+    so the total equals the original total even if a tax rate has been edited since. With
+    lines it is a partial credit. InvalidTransition is raised when the original is not an
+    invoice in the issued, sent, partially paid or paid status, so a voided invoice cannot be
+    credited again.
+
+    Args:
+        principal: Acting principal, who needs invoices:write or PermissionDenied is raised.
+        original: Invoice to credit.
+        lines: Lines of a partial credit, or None to credit the whole original.
+
+    Returns:
+        The draft credit note.
+
+    Raises:
+        Invoice.DoesNotExist: When the invoice is not stored for the current tenant.
+    """
+    require_permission(principal, Permission.INVOICES_WRITE)
+    stored = Invoice.objects.filter(pk=original.pk).first()
+    if stored is None:
+        raise Invoice.DoesNotExist("invoice is not stored for the current tenant")
+    _require_creditable(stored)
+    if lines is None:
+        lines = [
+            DraftLine(
+                line.description,
+                line.quantity,
+                line.unit_price,
+                line.discount_bp,
+                # An unsaved rate carrying the snapshot: save_draft reads its name and rate and
+                # links to it by key, so no schema or save_draft change is needed.
+                tuple(
+                    TaxRate(pk=tax.tax_rate_id, name=tax.name, rate_bp=tax.rate_bp)
+                    for tax in line.taxes.order_by("id")
+                ),
+                line.product,
+            )
+            for line in stored.lines.order_by("position")
+        ]
+    note = Invoice(
+        kind=Invoice.Kind.CREDIT_NOTE,
+        original=stored,
+        customer=stored.customer,
+        currency=stored.currency,
+    )
+    return save_draft(principal, note, lines)
 
 
 def _local_date(tenant: Tenant, moment: datetime) -> date:
