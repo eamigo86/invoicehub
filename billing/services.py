@@ -27,6 +27,7 @@ from billing.models import (
     AuditEvent,
     Customer,
     Invoice,
+    InvoiceEmail,
     InvoiceLine,
     InvoiceLineTax,
     InvoiceSeries,
@@ -828,3 +829,67 @@ def record_payment(
             {"status": row.status, "balance": remaining, "payment_id": payment.pk},
         )
     return payment
+
+
+@transaction.atomic
+def send_invoice(
+    principal: Principal | None,
+    invoice: Invoice,
+    idempotency_key: str,
+    recipients: list[str] | None = None,
+) -> InvoiceEmail:
+    """Request that an invoice is emailed with its PDF, once per idempotency key.
+
+    The invoice row is locked, so requests for the same invoice are serialized. A key already
+    used returns its request without storing, enqueueing or auditing anything again, even if
+    the invoice has changed status since. A new request is validated and stored, the event
+    invoice.send_requested is recorded with the recipients, and once the transaction commits
+    the task send_invoice_email is enqueued to deliver it.
+
+    Args:
+        principal: Acting principal, who needs invoices:write or PermissionDenied is raised.
+        invoice: Invoice to send.
+        idempotency_key: Caller-chosen key that identifies this request within the tenant.
+        recipients: Addresses to send to; the emails of the customer snapshot when omitted.
+
+    Returns:
+        The stored request, which is the earlier one when the key was already used.
+
+    Raises:
+        Invoice.DoesNotExist: When the invoice is not stored for the current tenant.
+        InvalidTransition: When the invoice is a draft or voided.
+        ValidationError: When the key belongs to another invoice, there is no recipient or an
+            address is invalid.
+    """
+    require_permission(principal, Permission.INVOICES_WRITE)
+    stored = Invoice.objects.select_for_update().filter(pk=invoice.pk).first()
+    if stored is None:
+        raise Invoice.DoesNotExist("invoice is not stored for the current tenant")
+    existing: InvoiceEmail | None = InvoiceEmail.objects.filter(
+        idempotency_key=idempotency_key
+    ).first()
+    if existing is not None:
+        if existing.invoice_id != stored.pk:
+            raise ValidationError("This idempotency key was used for another invoice.")
+        return existing
+    if stored.status in (Invoice.Status.DRAFT, Invoice.Status.VOIDED):
+        raise InvalidTransition(f"invoice is {stored.status}, only an issued invoice is sent")
+    if recipients is None:
+        recipients = (stored.customer_details or {}).get("emails", [])
+    if not recipients:
+        raise ValidationError("An invoice needs at least one recipient to be sent.")
+    request = InvoiceEmail(invoice=stored, idempotency_key=idempotency_key, recipients=recipients)
+    _clean(request)
+    request.save()
+    record_event(
+        principal,
+        "invoice.send_requested",
+        "invoice",
+        stored.pk,
+        after={"recipients": recipients, "idempotency_key": idempotency_key},
+    )
+    # Imported here because the task module imports this one.
+    from billing.tasks import send_invoice_email
+
+    transaction.on_commit(lambda: send_invoice_email.delay(str(request.tenant_id), str(request.pk)))
+    return request
