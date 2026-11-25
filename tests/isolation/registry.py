@@ -16,6 +16,7 @@ from typing import Any
 from celery import Celery
 from django.apps import apps
 from django.apps.registry import Apps
+from django.core.files.base import ContentFile
 from django.db import models
 from django.urls import URLPattern, URLResolver
 
@@ -34,6 +35,7 @@ from billing.models import (
     TaxRate,
 )
 from core.models import Currency
+from reconciliation.models import BankAccount, BankStatementImport, BankTransaction
 from tenancy.models import ApiToken, Membership, Tenant, TenantModel
 
 
@@ -187,6 +189,62 @@ def make_payment_allocation() -> TenantModel:
     return allocation
 
 
+def make_bank_account() -> TenantModel:
+    """Create one bank account for the active tenant.
+
+    Returns:
+        The saved account.
+    """
+    account: TenantModel = BankAccount.objects.create(
+        name=f"bank-{uuid.uuid4().hex[:8]}",
+        account_identifier="1234",
+        date_column="Date",
+        amount_column="Amount",
+        description_column="Memo",
+    )
+    return account
+
+
+def make_bank_statement_import() -> TenantModel:
+    """Create one statement import of a new bank account for the active tenant.
+
+    Returns:
+        The saved import.
+    """
+    account = make_bank_account()
+    statement: TenantModel = BankStatementImport.objects.create(
+        bank_account=account,
+        file=ContentFile(b"Date,Amount,Memo\n", name="statement.csv"),
+        file_sha256=uuid.uuid4().hex + uuid.uuid4().hex,
+        mapping={},
+    )
+    return statement
+
+
+def make_bank_transaction() -> TenantModel:
+    """Create one transaction of a new statement import for the active tenant.
+
+    Returns:
+        The saved transaction.
+    """
+    account = make_bank_account()
+    statement = BankStatementImport.objects.create(
+        bank_account=account,
+        file=ContentFile(b"Date,Amount,Memo\n", name="statement.csv"),
+        file_sha256=uuid.uuid4().hex + uuid.uuid4().hex,
+        mapping={},
+    )
+    transaction: TenantModel = BankTransaction.objects.create(
+        bank_account=account,
+        statement_import=statement,
+        value_date=datetime.date(2026, 6, 15),
+        amount=-1250,
+        description="Coffee",
+        dedupe_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+    )
+    return transaction
+
+
 FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {
     Customer: make_customer,
     TaxRate: make_tax_rate,
@@ -200,6 +258,9 @@ FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {
     InvoiceSeries: make_invoice_series,
     Payment: make_payment,
     PaymentAllocation: make_payment_allocation,
+    BankAccount: make_bank_account,
+    BankStatementImport: make_bank_statement_import,
+    BankTransaction: make_bank_transaction,
 }
 
 ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {
@@ -247,6 +308,10 @@ def clone_values(model: type[TenantModel]) -> dict[str, Any]:
         return {"invoice_id": make_invoice().pk}
     if model is InvoiceEmail:
         return {"idempotency_key": f"key-{uuid.uuid4().hex}"}
+    if model is BankStatementImport:
+        return {"file_sha256": uuid.uuid4().hex + uuid.uuid4().hex}
+    if model is BankTransaction:
+        return {"dedupe_hash": uuid.uuid4().hex + uuid.uuid4().hex}
     if model is Invoice:
         return {"notes": f"clone-{uuid.uuid4().hex}"}
     return {ADMIN_MARKER_FIELDS.get(model, "name"): f"clone-{uuid.uuid4().hex}"}
