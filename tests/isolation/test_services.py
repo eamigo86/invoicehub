@@ -42,7 +42,7 @@ from billing.services import (
 )
 from core.models import Currency
 from reconciliation.models import BankAccount, BankStatementImport
-from reconciliation.services import create_import
+from reconciliation.services import create_import, save_bank_account
 from tenancy.context import TenantMismatch, tenant_context
 from tenancy.models import Tenant
 from tenancy.permissions import Permission, Principal
@@ -793,3 +793,30 @@ def test_b_cannot_import_a_statement_into_an_account_of_a(
     with tenant_context(a.pk):
         assert not BankStatementImport.objects.exists()
     assert not media_root.exists()
+
+
+def test_b_cannot_modify_a_bank_account_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, saving A's bank account is refused and A's row keeps its name.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        account = save_bank_account(
+            owner_of(a),
+            BankAccount(
+                name="Chase",
+                account_identifier="1234",
+                date_column="Date",
+                amount_column="Amount",
+                description_column="Memo",
+            ),
+        )
+    account.name = "Hacked"
+    with tenant_context(b.pk), pytest.raises(TenantMismatch):
+        save_bank_account(owner_of(b), account)
+    with tenant_context(a.pk):
+        assert BankAccount.objects.get(pk=account.pk).name == "Chase"
+    with tenant_context(b.pk):
+        assert not BankAccount.objects.exists()
