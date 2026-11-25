@@ -9,9 +9,10 @@ import hashlib
 
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
-from reconciliation.models import BankAccount, BankStatementImport
+from reconciliation import engine
+from reconciliation.models import BankAccount, BankStatementImport, ReconciliationRun
 from tenancy.context import require_current_tenant_id
 from tenancy.permissions import Permission, Principal, require_permission
 
@@ -107,3 +108,52 @@ def save_bank_account(principal: Principal | None, bank_account: BankAccount) ->
     bank_account.full_clean()
     bank_account.save()
     return bank_account
+
+
+def _pending_run() -> ReconciliationRun | None:
+    """Find the pending run of the current tenant, if any.
+
+    Returns:
+        The pending run, or None.
+    """
+    return ReconciliationRun.objects.filter(status=ReconciliationRun.Status.PENDING).first()
+
+
+def run_reconciliation(principal: Principal | None) -> ReconciliationRun:
+    """Request a reconciliation run, or return the one already waiting.
+
+    A tenant has at most one pending run, enforced by a partial unique constraint. When one
+    exists it is returned and nothing is enqueued, so repeating the request is harmless. Otherwise
+    a run is stored with the default engine configuration and version and the requesting user,
+    and once the transaction commits the task reconcile_run is enqueued. A request that loses a
+    race to a concurrent one hits the constraint inside a savepoint and returns the winner's run.
+
+    Args:
+        principal: Acting principal, who needs reconciliation:write or PermissionDenied is
+            raised.
+
+    Returns:
+        The pending run, new or already existing.
+
+    Raises:
+        IntegrityError: When the insert failed on a constraint other than the single pending run.
+    """
+    require_permission(principal, Permission.RECONCILIATION_WRITE)
+    if (pending := _pending_run()) is not None:
+        return pending
+    # Imported here because the task module imports models that this one also uses.
+    from reconciliation.tasks import reconcile_run
+
+    try:
+        with transaction.atomic():
+            run: ReconciliationRun = ReconciliationRun.objects.create(
+                config=engine.default_config(),
+                engine_version=engine.engine_version(),
+                requested_by_id=principal.user_id if principal else None,
+            )
+            transaction.on_commit(lambda: reconcile_run.delay(str(run.tenant_id), str(run.pk)))
+    except IntegrityError:
+        if (winner := _pending_run()) is None:
+            raise
+        return winner
+    return run

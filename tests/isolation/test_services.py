@@ -41,8 +41,8 @@ from billing.services import (
     update_issuer,
 )
 from core.models import Currency
-from reconciliation.models import BankAccount, BankStatementImport
-from reconciliation.services import create_import, save_bank_account
+from reconciliation.models import BankAccount, BankStatementImport, ReconciliationRun
+from reconciliation.services import create_import, run_reconciliation, save_bank_account
 from tenancy.context import TenantMismatch, tenant_context
 from tenancy.models import Tenant
 from tenancy.permissions import Permission, Principal
@@ -820,3 +820,34 @@ def test_b_cannot_modify_a_bank_account_of_a(tenants: tuple[Tenant, Tenant]) -> 
         assert BankAccount.objects.get(pk=account.pk).name == "Chase"
     with tenant_context(b.pk):
         assert not BankAccount.objects.exists()
+
+
+def test_a_pending_run_of_a_is_not_returned_to_b(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, a request creates B's own run instead of returning A's pending run.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        run_of_a = run_reconciliation(owner_of(a))
+    with tenant_context(b.pk):
+        run_of_b = run_reconciliation(owner_of(b))
+        assert run_of_b.pk != run_of_a.pk
+        assert [r.pk for r in ReconciliationRun.objects.all()] == [run_of_b.pk]
+    with tenant_context(a.pk):
+        assert [r.pk for r in ReconciliationRun.objects.all()] == [run_of_a.pk]
+
+
+def test_a_principal_of_a_cannot_request_a_run_under_b(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, A's principal is refused and no run is stored in either tenant.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(b.pk), pytest.raises(PermissionDenied):
+        run_reconciliation(owner_of(a))
+    for tenant in tenants:
+        with tenant_context(tenant.pk):
+            assert not ReconciliationRun.objects.exists()
