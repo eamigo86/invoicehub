@@ -114,8 +114,8 @@ class DraftInvoiceInput(InputType):
     _check_customer = field_validator("customer_id")(_row_id)
 
 
-class InvoiceReference(BaseModel):
-    """The id argument of a mutation on one invoice, validated like the id of a draft input."""
+class UuidReference(BaseModel):
+    """The id argument of a mutation on one invoice or match proposal, both keyed by UUID."""
 
     id: uuid.UUID
 

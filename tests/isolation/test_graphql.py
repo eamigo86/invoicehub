@@ -14,7 +14,18 @@ from tenancy.context import tenant_context
 from tenancy.models import Membership, Tenant, TenantModel
 from tenancy.permissions import Principal
 from tenancy.tokens import issue_token
-from tests.test_api_actions import CREDIT, ISSUE, SEND, draft_for, issued_invoice
+from tests.test_api_actions import (
+    ACCEPT,
+    ALL_SCOPES,
+    CREDIT,
+    ISSUE,
+    REJECT,
+    SEND,
+    draft_for,
+    issued_invoice,
+    pending_proposal,
+    state_of,
+)
 from tests.test_api_actions import make_world as make_issuer_world
 from tests.test_api_graphql import make_world as make_invoice_world
 from tests.test_api_mutations import DELETE_DRAFT, SAVE_CUSTOMER, SAVE_DRAFT, catalog
@@ -303,3 +314,22 @@ def test_a_cannot_draft_a_credit_note_for_the_invoice_of_b() -> None:
     for tenant in (tenant_a, tenant_b):
         with tenant_context(tenant.pk):
             assert not Invoice.objects.filter(kind=Invoice.Kind.CREDIT_NOTE).exists()
+
+
+@pytest.mark.parametrize(("query", "root"), [(ACCEPT, "acceptMatch"), (REJECT, "rejectMatch")])
+def test_a_cannot_decide_the_proposal_of_b(query: str, root: str) -> None:
+    """Mutation.acceptMatch and rejectMatch with B's proposal id are NOT_FOUND, B's stays pending.
+
+    Args:
+        query: Mutation document under test.
+        root: Mutation field under test.
+    """
+    tenant_a, token_a, proposal_a = pending_proposal("A", ALL_SCOPES)
+    tenant_b, _, proposal_b = pending_proposal("B", ALL_SCOPES)
+    data = mutate(query, token_a, id=str(proposal_b.pk))[root]
+    assert data["proposal"] is None
+    assert [(e["code"], e["field"]) for e in data["errors"]] == [("NOT_FOUND", "id")]
+    assert state_of(tenant_b, proposal_b) == "pending"
+    assert state_of(tenant_a, proposal_a) == "pending"
+    with tenant_context(tenant_b.pk):
+        assert not Payment.objects.filter(source=Payment.Source.BANK).exists()

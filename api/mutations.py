@@ -28,10 +28,10 @@ from api.inputs import (
     CustomerInput,
     DraftInvoiceInput,
     DraftLineInput,
-    InvoiceReference,
     SendInvoiceInput,
+    UuidReference,
 )
-from api.types import CustomerType, InvoiceType
+from api.types import CustomerType, InvoiceType, MatchProposalType
 from billing.models import Customer, Invoice
 from billing.services import (
     DraftLine,
@@ -46,6 +46,8 @@ from billing.services import (
     save_draft,
     send_invoice,
 )
+from reconciliation.models import MatchProposal
+from reconciliation.services import accept_proposal, list_match_proposals, reject_proposal
 from tenancy.permissions import Principal, request_principal
 
 # graphex compiles the input types when the apps are ready, before ours are defined.
@@ -277,7 +279,7 @@ class DeleteDraftPayload(Payload):
         principal = request_principal(info.context)
 
         def delete() -> str:
-            reference = InvoiceReference.model_validate({"id": args["id"]})
+            reference = UuidReference.model_validate({"id": args["id"]})
             invoice = _find(list_invoices, principal, reference.id, "id", "Invoice")
             delete_draft(principal, invoice)
             return str(reference.id)
@@ -311,7 +313,7 @@ class IssueInvoicePayload(Payload):
         principal = request_principal(info.context)
 
         def issue() -> Invoice:
-            reference = InvoiceReference.model_validate({"id": args["id"]})
+            reference = UuidReference.model_validate({"id": args["id"]})
             invoice = _find(list_invoices, principal, reference.id, "id", "Invoice")
             return issue_invoice(principal, invoice)
 
@@ -389,6 +391,81 @@ class DraftCreditNotePayload(Payload):
         return cls.reply(credit_note=note, errors=errors)
 
 
+def _decide(
+    principal: Principal | None,
+    raw_id: Any,
+    service: Callable[[Principal | None, MatchProposal], object],
+) -> MatchProposal:
+    """Apply a review decision to a proposal and read the proposal again.
+
+    Args:
+        principal: Acting principal.
+        raw_id: Proposal id as received from the caller.
+        service: Reconciliation service that decides the proposal.
+
+    Returns:
+        The proposal as stored after the decision.
+    """
+    reference = UuidReference.model_validate({"id": raw_id})
+    proposal = _find(list_match_proposals, principal, reference.id, "id", "Match proposal")
+    service(principal, proposal)
+    return _find(list_match_proposals, principal, reference.id, "id", "Match proposal")
+
+
+class AcceptMatchPayload(Payload):
+    """The proposal after it was accepted, or the reasons it was not."""
+
+    proposal = field(MatchProposalType)
+
+    class Arguments:
+        """Arguments of acceptMatch."""
+
+        id = GraphQLArgument(GraphQLNonNull(GraphQLID))
+
+    @classmethod
+    def mutate(cls, root: Any, info: GraphQLResolveInfo[Any], **args: Any) -> Any:
+        """Accept a pending proposal, which records the payments it describes.
+
+        Args:
+            root: Unused root value.
+            info: Resolve info, whose context is the request.
+            **args: Arguments of the field, holding the id.
+
+        Returns:
+            The payload.
+        """
+        principal = request_principal(info.context)
+        proposal, errors = _attempt(lambda: _decide(principal, args["id"], accept_proposal))
+        return cls.reply(proposal=proposal, errors=errors)
+
+
+class RejectMatchPayload(Payload):
+    """The proposal after it was rejected, or the reasons it was not."""
+
+    proposal = field(MatchProposalType)
+
+    class Arguments:
+        """Arguments of rejectMatch."""
+
+        id = GraphQLArgument(GraphQLNonNull(GraphQLID))
+
+    @classmethod
+    def mutate(cls, root: Any, info: GraphQLResolveInfo[Any], **args: Any) -> Any:
+        """Reject a pending proposal, which frees its transactions and invoices.
+
+        Args:
+            root: Unused root value.
+            info: Resolve info, whose context is the request.
+            **args: Arguments of the field, holding the id.
+
+        Returns:
+            The payload.
+        """
+        principal = request_principal(info.context)
+        proposal, errors = _attempt(lambda: _decide(principal, args["id"], reject_proposal))
+        return cls.reply(proposal=proposal, errors=errors)
+
+
 class Mutation(ObjectType):
     """Root mutation type."""
 
@@ -398,3 +475,5 @@ class Mutation(ObjectType):
     issue_invoice = IssueInvoicePayload.Field()
     send_invoice = SendInvoicePayload.Field()
     draft_credit_note = DraftCreditNotePayload.Field()
+    accept_match = AcceptMatchPayload.Field()
+    reject_match = RejectMatchPayload.Field()

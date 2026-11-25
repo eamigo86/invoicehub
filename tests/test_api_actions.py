@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 
 from billing.models import AuditEvent, Customer, Invoice, InvoiceEmail
+from reconciliation.models import MatchProposal
 from tenancy.context import tenant_context
 from tenancy.models import ApiToken, Tenant
 from tests.test_api_graphql import make_world as base_world
@@ -19,6 +20,7 @@ from tests.test_api_mutations import (
     make_draft,
     run,
 )
+from tests.test_api_queries import make_world as queries_world
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -318,3 +320,101 @@ def test_draft_credit_note_reports_each_refusal_as_a_typed_error() -> None:
     assert credit(token_r, invoiceId=readable) == [("PERMISSION_DENIED", None)]
     with tenant_context(tenant.pk):
         assert not Invoice.objects.filter(kind=Invoice.Kind.CREDIT_NOTE).exists()
+
+
+ALL_SCOPES = [*READ_WRITE, "reconciliation:write"]
+ACCEPT = (
+    f"mutation Accept($id: ID!) {{ acceptMatch(id: $id) {{ proposal {{ id state }} {ERRORS} }} }}"
+)
+REJECT = (
+    f"mutation Reject($id: ID!) {{ rejectMatch(id: $id) {{ proposal {{ id state }} {ERRORS} }} }}"
+)
+
+
+def pending_proposal(name: str, scopes: list[str]) -> tuple[Tenant, str, MatchProposal]:
+    """Create a tenant with a pending match proposal and a token.
+
+    Args:
+        name: Tenant name.
+        scopes: Scopes granted to the token.
+
+    Returns:
+        The tenant, the plaintext token and the pending proposal.
+    """
+    token = queries_world(name, scopes)
+    tenant = Tenant.objects.get(name=name)
+    with tenant_context(tenant.pk):
+        proposal = MatchProposal.objects.get(state=MatchProposal.State.PENDING)
+    return tenant, token, proposal
+
+
+def state_of(tenant: Tenant, proposal: MatchProposal) -> str:
+    """Read the stored state of a proposal.
+
+    Args:
+        tenant: Tenant of the proposal.
+        proposal: Proposal to read.
+
+    Returns:
+        The state value such as pending.
+    """
+    with tenant_context(tenant.pk):
+        return str(MatchProposal.objects.get(pk=proposal.pk).state)
+
+
+def test_accept_match_applies_the_proposal_and_returns_its_new_state() -> None:
+    """Accepting a pending proposal marks it applied, decided by the token's user."""
+    tenant, token, proposal = pending_proposal("A", ALL_SCOPES)
+    data = run(ACCEPT, token, id=str(proposal.pk))["acceptMatch"]
+    assert data == {"proposal": {"id": str(proposal.pk), "state": "APPLIED"}, "errors": []}
+    assert state_of(tenant, proposal) == "applied"
+    with tenant_context(tenant.pk):
+        event = AuditEvent.objects.get(action="reconciliation.proposal_applied")
+        assert event.actor_token == ApiToken.objects.get()
+
+
+def test_reject_match_rejects_the_proposal_and_returns_its_new_state() -> None:
+    """Rejecting a pending proposal marks it rejected and records no payment."""
+    tenant, token, proposal = pending_proposal("A", ["invoices:read", "reconciliation:write"])
+    data = run(REJECT, token, id=str(proposal.pk))["rejectMatch"]
+    assert data == {"proposal": {"id": str(proposal.pk), "state": "REJECTED"}, "errors": []}
+    assert state_of(tenant, proposal) == "rejected"
+
+
+def test_deciding_a_proposal_twice_is_an_invalid_transition() -> None:
+    """A rejected proposal cannot be accepted and an applied one cannot be rejected."""
+    tenant, token, proposal = pending_proposal("A", ALL_SCOPES)
+    run(REJECT, token, id=str(proposal.pk))
+    accepted = run(ACCEPT, token, id=str(proposal.pk))["acceptMatch"]
+    assert accepted["proposal"] is None
+    assert [e["code"] for e in accepted["errors"]] == ["INVALID_TRANSITION"]
+    other_tenant, other_token, other = pending_proposal("B", ALL_SCOPES)
+    run(ACCEPT, other_token, id=str(other.pk))
+    rejected = run(REJECT, other_token, id=str(other.pk))["rejectMatch"]
+    assert [e["code"] for e in rejected["errors"]] == ["INVALID_TRANSITION"]
+    assert state_of(tenant, proposal) == "rejected"
+    assert state_of(other_tenant, other) == "applied"
+
+
+def test_a_match_decision_needs_the_scopes_of_its_service() -> None:
+    """Accept needs reconciliation:write and invoices:write, reject only the first."""
+    tenant, token, proposal = pending_proposal("A", ["invoices:read", "invoices:write"])
+    for query, key in ((ACCEPT, "acceptMatch"), (REJECT, "rejectMatch")):
+        data = run(query, token, id=str(proposal.pk))[key]
+        assert [e["code"] for e in data["errors"]] == ["PERMISSION_DENIED"]
+        assert "reconciliation:write" in data["errors"][0]["message"]
+    tenant_r, token_r, proposal_r = pending_proposal("R", ["invoices:read", "reconciliation:write"])
+    denied = run(ACCEPT, token_r, id=str(proposal_r.pk))["acceptMatch"]
+    assert [e["code"] for e in denied["errors"]] == ["PERMISSION_DENIED"]
+    assert "invoices:write" in denied["errors"][0]["message"]
+    assert state_of(tenant, proposal) == state_of(tenant_r, proposal_r) == "pending"
+
+
+def test_a_match_decision_reports_unknown_and_malformed_ids() -> None:
+    """A missing id is NOT_FOUND at id, a non-numeric one a validation error."""
+    _, token, _ = pending_proposal("A", ALL_SCOPES)
+    for query, key in ((ACCEPT, "acceptMatch"), (REJECT, "rejectMatch")):
+        missing = run(query, token, id="00000000-0000-0000-0000-000000000000")[key]
+        assert [(e["code"], e["field"]) for e in missing["errors"]] == [("NOT_FOUND", "id")]
+        bad = run(query, token, id="abc")[key]
+        assert [(e["code"], e["field"]) for e in bad["errors"]] == [("VALIDATION_ERROR", "id")]
