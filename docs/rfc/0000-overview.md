@@ -106,7 +106,7 @@ Django as the core because it is where the most experience is and what best solv
 | LLM | OpenRouter behind a custom adapter | 0006 |
 | Deployment | Docker, Cloud Run, Cloud SQL, Memorystore | 0007 |
 | Observability | OpenTelemetry, Sentry, structured logs | 0007 |
-| Quality | pytest, ruff, mypy, pre-commit, GitHub Actions | 0007 |
+| Quality | pytest, Hypothesis, ruff, mypy, pre-commit, GitHub Actions | 0007 |
 | Demo and seed data | Faker (`en_US`, fixed seed) | 0007 |
 
 **Cross-cutting decisions**

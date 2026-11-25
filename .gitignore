@@ -25,3 +25,4 @@ odd/
 # Built artifact (Tailwind)
 static/css/app.css
 .atl/
+.hypothesis/
