@@ -2,6 +2,7 @@
 
 import uuid
 
+from django.conf import settings
 from django.contrib.postgres.functions import RandomUUID
 from django.db import models
 
@@ -170,3 +171,199 @@ class BankTransaction(TenantModel):
             The value date, the amount in cents and the description.
         """
         return f"{self.value_date} {self.amount} {self.description}"
+
+
+class ReconciliationRun(TenantModel):
+    """One execution of the matching engine and the metrics it produced.
+
+    Attributes:
+        status: Whether the run is pending, completed or failed.
+        config: The match configuration values used, as plain JSON.
+        engine_version: Version of the matching engine that ran.
+        requested_by: User who started the run, empty for system runs.
+        transactions_considered: Bank transactions given to the engine.
+        invoices_considered: Open invoices given to the engine.
+        auto_count: Proposals the engine marked auto.
+        suggested_count: Proposals the engine marked suggested.
+        ambiguous_count: Proposals the engine marked ambiguous.
+        unmatched_transactions: Transactions with no proposal.
+        unmatched_invoices: Invoices with no proposal.
+        duration_ms: Wall time of the run in milliseconds.
+        error: Failure message, empty unless the run failed.
+        created_at: When the run was requested.
+        completed_at: When the run finished, empty until then.
+    """
+
+    class Status(models.TextChoices):
+        """The run states."""
+
+        PENDING = "pending"
+        COMPLETED = "completed"
+        FAILED = "failed"
+
+    id = models.UUIDField(
+        primary_key=True, default=uuid.uuid4, db_default=RandomUUID(), editable=False
+    )
+    status = models.CharField(max_length=10, choices=Status, default=Status.PENDING)
+    config = models.JSONField()
+    engine_version = models.CharField(max_length=30, blank=True)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    transactions_considered = models.PositiveIntegerField(default=0)
+    invoices_considered = models.PositiveIntegerField(default=0)
+    auto_count = models.PositiveIntegerField(default=0)
+    suggested_count = models.PositiveIntegerField(default=0)
+    ambiguous_count = models.PositiveIntegerField(default=0)
+    unmatched_transactions = models.PositiveIntegerField(default=0)
+    unmatched_invoices = models.PositiveIntegerField(default=0)
+    duration_ms = models.PositiveIntegerField(null=True, blank=True)
+    error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        """Model options."""
+
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        """Describe the run by date and status.
+
+        Returns:
+            The creation time and the status.
+        """
+        return f"{self.created_at:%Y-%m-%d %H:%M} ({self.status})"
+
+
+class MatchProposal(TenantModel):
+    """A set of transactions the engine proposes to settle a set of invoices.
+
+    Attributes:
+        run: Run that produced the proposal.
+        kind: Cardinality, one to one, one to many or many to one.
+        engine_status: Status exactly as the engine returned it.
+        score: Engine confidence between 0 and 1, not money.
+        breakdown: Score per signal, shown to explain the proposal.
+        residual: Transactions minus invoices in cents, negative when a fee was deducted.
+        state: Where the proposal stands in the review workflow.
+        decided_by: User who decided, empty for system decisions.
+        decided_at: When the proposal left the pending state.
+        created_at: When the proposal was created.
+        transactions: The bank transactions it links.
+        invoices: The invoices it links.
+    """
+
+    class Kind(models.TextChoices):
+        """Cardinality of a proposal, as remitmatch spells it."""
+
+        ONE_TO_ONE = "1:1"
+        ONE_TO_MANY = "1:N"
+        MANY_TO_ONE = "N:1"
+
+    class EngineStatus(models.TextChoices):
+        """Status assigned by the engine."""
+
+        AUTO = "auto"
+        SUGGESTED = "suggested"
+        AMBIGUOUS = "ambiguous"
+
+    class State(models.TextChoices):
+        """Review workflow states."""
+
+        PENDING = "pending"
+        APPLIED = "applied"
+        REJECTED = "rejected"
+        REASSIGNED = "reassigned"
+        UNDONE = "undone"
+
+    id = models.UUIDField(
+        primary_key=True, default=uuid.uuid4, db_default=RandomUUID(), editable=False
+    )
+    run = models.ForeignKey(ReconciliationRun, on_delete=models.PROTECT, related_name="proposals")
+    kind = models.CharField(max_length=3, choices=Kind)
+    engine_status = models.CharField(max_length=10, choices=EngineStatus)
+    score = models.FloatField()
+    breakdown = models.JSONField()
+    residual = models.BigIntegerField()
+    state = models.CharField(max_length=10, choices=State, default=State.PENDING)
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    transactions = models.ManyToManyField(
+        BankTransaction, through="MatchProposalTransaction", related_name="proposals"
+    )
+    invoices = models.ManyToManyField(
+        "billing.Invoice", through="MatchProposalInvoice", related_name="+"
+    )
+
+    class Meta:
+        """Model options."""
+
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(score__gte=0, score__lte=1), name="matchproposal_score_unit"
+            )
+        ]
+
+    def __str__(self) -> str:
+        """Describe the proposal by kind, engine status and score.
+
+        Returns:
+            The kind, the engine status and the score.
+        """
+        return f"{self.kind} {self.engine_status} {self.score:.2f}"
+
+
+class MatchProposalTransaction(TenantModel):
+    """Link between a proposal and one of its bank transactions.
+
+    An explicit through model, because an implicit one would carry no tenant.
+
+    Attributes:
+        proposal: The proposal, whose deletion removes the link.
+        transaction: The linked transaction, protected against deletion.
+    """
+
+    id = models.UUIDField(
+        primary_key=True, default=uuid.uuid4, db_default=RandomUUID(), editable=False
+    )
+    proposal = models.ForeignKey(MatchProposal, on_delete=models.CASCADE)
+    transaction = models.ForeignKey(BankTransaction, on_delete=models.PROTECT)
+
+    class Meta:
+        """Model options."""
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "proposal", "transaction"], name="matchproptx_tenant_pair_uniq"
+            )
+        ]
+
+
+class MatchProposalInvoice(TenantModel):
+    """Link between a proposal and one of its invoices.
+
+    An explicit through model, because an implicit one would carry no tenant.
+
+    Attributes:
+        proposal: The proposal, whose deletion removes the link.
+        invoice: The linked invoice, protected against deletion.
+    """
+
+    id = models.UUIDField(
+        primary_key=True, default=uuid.uuid4, db_default=RandomUUID(), editable=False
+    )
+    proposal = models.ForeignKey(MatchProposal, on_delete=models.CASCADE)
+    invoice = models.ForeignKey("billing.Invoice", on_delete=models.PROTECT)
+
+    class Meta:
+        """Model options."""
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "proposal", "invoice"], name="matchpropinv_tenant_pair_uniq"
+            )
+        ]

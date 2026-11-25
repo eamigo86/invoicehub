@@ -35,7 +35,15 @@ from billing.models import (
     TaxRate,
 )
 from core.models import Currency
-from reconciliation.models import BankAccount, BankStatementImport, BankTransaction
+from reconciliation.models import (
+    BankAccount,
+    BankStatementImport,
+    BankTransaction,
+    MatchProposal,
+    MatchProposalInvoice,
+    MatchProposalTransaction,
+    ReconciliationRun,
+)
 from tenancy.models import ApiToken, Membership, Tenant, TenantModel
 
 
@@ -245,6 +253,57 @@ def make_bank_transaction() -> TenantModel:
     return transaction
 
 
+def make_reconciliation_run() -> TenantModel:
+    """Create one reconciliation run for the active tenant.
+
+    Returns:
+        The saved run.
+    """
+    run: TenantModel = ReconciliationRun.objects.create(config={})
+    return run
+
+
+def make_match_proposal() -> TenantModel:
+    """Create one proposal of a new run for the active tenant.
+
+    Returns:
+        The saved proposal.
+    """
+    proposal: TenantModel = MatchProposal.objects.create(
+        run=ReconciliationRun.objects.create(config={}),
+        kind=MatchProposal.Kind.ONE_TO_ONE,
+        engine_status=MatchProposal.EngineStatus.AUTO,
+        score=0.95,
+        breakdown={},
+        residual=0,
+    )
+    return proposal
+
+
+def make_match_proposal_transaction() -> TenantModel:
+    """Create one link between a new proposal and a new transaction for the active tenant.
+
+    Returns:
+        The saved link.
+    """
+    link: TenantModel = MatchProposalTransaction.objects.create(
+        proposal=make_match_proposal(), transaction=make_bank_transaction()
+    )
+    return link
+
+
+def make_match_proposal_invoice() -> TenantModel:
+    """Create one link between a new proposal and a new invoice for the active tenant.
+
+    Returns:
+        The saved link.
+    """
+    link: TenantModel = MatchProposalInvoice.objects.create(
+        proposal=make_match_proposal(), invoice=make_invoice()
+    )
+    return link
+
+
 FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {
     Customer: make_customer,
     TaxRate: make_tax_rate,
@@ -261,6 +320,10 @@ FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {
     BankAccount: make_bank_account,
     BankStatementImport: make_bank_statement_import,
     BankTransaction: make_bank_transaction,
+    ReconciliationRun: make_reconciliation_run,
+    MatchProposal: make_match_proposal,
+    MatchProposalTransaction: make_match_proposal_transaction,
+    MatchProposalInvoice: make_match_proposal_invoice,
 }
 
 ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {
@@ -327,6 +390,14 @@ def clone_values(model: type[TenantModel]) -> dict[str, Any]:
         return {"file_sha256": uuid.uuid4().hex + uuid.uuid4().hex}
     if model is BankTransaction:
         return {"dedupe_hash": uuid.uuid4().hex + uuid.uuid4().hex}
+    if model is ReconciliationRun:
+        return {"error": f"clone-{uuid.uuid4().hex}"}
+    if model is MatchProposal:
+        return {"residual": 1}
+    if model is MatchProposalTransaction:
+        return {"transaction_id": make_bank_transaction().pk}
+    if model is MatchProposalInvoice:
+        return {"invoice_id": make_invoice().pk}
     if model is Invoice:
         return {"notes": f"clone-{uuid.uuid4().hex}"}
     return {ADMIN_MARKER_FIELDS.get(model, "name"): f"clone-{uuid.uuid4().hex}"}
