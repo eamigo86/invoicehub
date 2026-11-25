@@ -1,5 +1,6 @@
 """Admin registration for billing models."""
 
+import uuid
 from typing import Any
 
 from django.contrib import admin, messages
@@ -35,6 +36,7 @@ from .services import (
     save_product,
     save_series,
     save_tax_rate,
+    send_invoice,
 )
 
 
@@ -420,7 +422,7 @@ class InvoiceAdmin(TenantModelAdmin):
     list_filter = ("kind", "status")
     list_select_related = ("customer",)
     inlines = [InvoiceLineInline]
-    actions = ["issue_selected_drafts", "create_full_credit_notes"]
+    actions = ["issue_selected_drafts", "create_full_credit_notes", "email_selected_invoices"]
 
     def has_issue_permission(self, request: HttpRequest) -> bool:
         """Offer the issue action to principals who hold invoices:write.
@@ -490,6 +492,36 @@ class InvoiceAdmin(TenantModelAdmin):
                     request,
                     f"Drafted credit note {note.pk} for {invoice.reference}.",
                     messages.SUCCESS,
+                )
+
+    @admin.action(description="Email selected invoices", permissions=["issue"])
+    def email_selected_invoices(self, request: HttpRequest, queryset: QuerySet[Invoice]) -> None:
+        """Request the email of each selected invoice and report every outcome.
+
+        Invoices are taken ordered by pk. Each invocation uses a fresh idempotency key per
+        invoice, so choosing the action again sends again; the delivery runs in a task.
+
+        Args:
+            request: Current request.
+            queryset: Invoices selected in the changelist.
+        """
+        principal = request_principal(request)
+        for invoice in queryset.order_by("pk"):
+            try:
+                send_invoice(principal, invoice, uuid.uuid4().hex)
+            except Invoice.DoesNotExist:
+                self.message_user(
+                    request, f"{invoice.pk}: the invoice no longer exists.", messages.ERROR
+                )
+            except ValidationError as error:
+                self.message_user(
+                    request, f"{invoice.pk}: {' '.join(error.messages)}", messages.ERROR
+                )
+            except InvalidTransition as error:
+                self.message_user(request, f"{invoice.pk}: {error}", messages.ERROR)
+            else:
+                self.message_user(
+                    request, f"Email requested for {invoice.reference}.", messages.SUCCESS
                 )
 
     def has_add_permission(self, request: HttpRequest) -> bool:
