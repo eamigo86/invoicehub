@@ -44,7 +44,11 @@ services:
   worker:
     <<: *app
     command: celery -A config worker -l info
-    environment: *app-env
+    environment:
+      <<: *app-env
+      # remitmatch runs one thread per core in every prefork child; one thread each avoids
+      # oversubscribing the CPU when several workers share a machine.
+      RAYON_NUM_THREADS: "1"
     healthcheck:
       test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$HOSTNAME"]
       interval: 10s

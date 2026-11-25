@@ -527,7 +527,7 @@ requires-dist = [
     { name = "gunicorn", specifier = ">=27.0.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.9" },
     { name = "redis", specifier = ">=8.2.0" },
-    { name = "remitmatch", specifier = "==0.1.0a1" },
+    { name = "remitmatch", specifier = "==0.1.0a2" },
     { name = "weasyprint", specifier = ">=70.0" },
 ]
 
@@ -880,15 +880,15 @@ wheels = [
 
 [[package]]
 name = "remitmatch"
-version = "0.1.0a1"
+version = "0.1.0a2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c0/e4/511dbbe362ccf4c1bbc854f6f34d987ab3983bf8613996f1c2fcc0193e85/remitmatch-0.1.0a1.tar.gz", hash = "sha256:000a63482a40bd6d35fd894defef74d7c6618ccee5426259cd1578426966e00d", size = 67717, upload-time = "2026-11-25T04:29:33.04Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/39/c9a0bfb99f9a8b448c6dda3c28668a62b5caf38a0bbbae6bd9ea3eedc3ec/remitmatch-0.1.0a2.tar.gz", hash = "sha256:f36b1822e681c2b7faf8171c4157c83c042e72eeebf06bc435b60674f6fc7d32", size = 83406, upload-time = "2026-11-25T18:24:33.379Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/d4/a1bf9c26f24536d23ef69126e9fe8f57555185059d120fe92f2bfa7a8a41/remitmatch-0.1.0a1-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:9d5380880d74e0c1bce5417694f0f92839018f874a079a466031e8e62805e2e5", size = 3731652, upload-time = "2026-11-25T04:29:24.806Z" },
-    { url = "https://files.pythonhosted.org/packages/d6/e9/853bb0c30b474a9c416c41ad06b4b8227b617a98fad66eee6eb5b2d4f3da/remitmatch-0.1.0a1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:85ff4713adf8108a62663146c102282e1f735fd1498d28d2abb0c5b490f46678", size = 3502144, upload-time = "2026-11-25T04:29:26.492Z" },
-    { url = "https://files.pythonhosted.org/packages/71/4f/c98a9893ceee2351606230b7b57bf6d981f814b16b243871df4099bad4c0/remitmatch-0.1.0a1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:0cea1b945d2eb55bf38788eaa45dff968cb93ec7dd549bcc8e2b66db5d83595f", size = 4022587, upload-time = "2026-11-25T04:29:28.39Z" },
-    { url = "https://files.pythonhosted.org/packages/0c/1a/01f9089314e99e65dc425716e66c00cd63143eb658c01c7f2c57f052f026/remitmatch-0.1.0a1-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:179deab855fe4d0d7224be608477a03997139d178387145d0e2a5c3f683a1112", size = 4100866, upload-time = "2026-11-25T04:29:30Z" },
-    { url = "https://files.pythonhosted.org/packages/39/02/3d0d01b699b7acc124e8c3c39ed8caeaac6c71de17a99f5b79d316363df8/remitmatch-0.1.0a1-cp310-abi3-win_amd64.whl", hash = "sha256:f1465a8e6964e42559e00c5b5ba9bf77025a2b301e9fb0c8794a67573580c8e5", size = 3600070, upload-time = "2026-11-25T04:29:31.479Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/03/5dafc9202ec9255b9eacfb7d026468d537d1f188ed5f1d33fd95bf9759f5/remitmatch-0.1.0a2-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:7f29274e558a452a85571fb6bc3a36b7b65eb65616cb30c94b60d8c77f79d731", size = 3792762, upload-time = "2026-11-25T18:24:24.884Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/ad/ac38bd7d0ee7f87d870645274037ffc7003c685d73437246768ef38de114/remitmatch-0.1.0a2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:99fe66e8c42e2bc33d03883f0e030ad8cc9edf560443d069c2d84488ae503a11", size = 3560039, upload-time = "2026-11-25T18:24:26.588Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/be/7c741de57fb68d09802b00de6f73afb712e208564bf3a055cdfb0904d4fe/remitmatch-0.1.0a2-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:2ed68e36f6b5bd35bf95f1983bc0b1c1dd78a622a5ff08ce1732595abd5f4e9c", size = 4099016, upload-time = "2026-11-25T18:24:28.364Z" },
+    { url = "https://files.pythonhosted.org/packages/50/3e/9aec7bcbcbc7303c030d7c4803e507779d6a74778e8de68d0c4a51649e8a/remitmatch-0.1.0a2-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:d2c3bb316f60f331f4b817ee7c8b25b3561ee0f4f352cc9574e830b329e06987", size = 4170252, upload-time = "2026-11-25T18:24:30.111Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/30/e9f33c1373fe4e5f6ad74e0750e5f6e55dd28349ea753132e744ace632b1/remitmatch-0.1.0a2-cp310-abi3-win_amd64.whl", hash = "sha256:be591c712ea79cbeed0f979fe8914c89ae620c1ef52bdad2f1ac91cf0670e07c", size = 3647413, upload-time = "2026-11-25T18:24:31.924Z" },
 ]
 
 [[package]]

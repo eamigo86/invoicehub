@@ -14,7 +14,7 @@ dependencies = [
     "gunicorn>=27.0.1",
     "psycopg[binary]>=3.3.9",
     "redis>=8.2.0",
-    "remitmatch==0.1.0a1",
+    "remitmatch==0.1.0a2",
     "weasyprint>=70.0",
 ]
 
