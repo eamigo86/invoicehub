@@ -12,12 +12,24 @@ another tenant raises ValidationError.
 
 import uuid
 from collections.abc import Iterable
+from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 
-from billing.models import AuditEvent, Customer, Product, ProductTaxRate, TaxRate
+from billing.calculations import LineInput, TaxRateInput, invoice_totals
+from billing.models import (
+    AuditEvent,
+    Customer,
+    Invoice,
+    InvoiceLine,
+    InvoiceLineTax,
+    Product,
+    ProductTaxRate,
+    TaxRate,
+)
 from tenancy.context import require_current_tenant_id
 from tenancy.models import Tenant, TenantModel
 from tenancy.permissions import Permission, Principal, require_permission
@@ -224,3 +236,179 @@ def record_event(
     )
     event.save()
     return event
+
+
+class InvalidTransition(Exception):
+    """Raised when an invoice is not in a state that allows the requested change."""
+
+
+@dataclass(frozen=True)
+class DraftLine:
+    """The input for one line of a draft invoice.
+
+    Attributes:
+        description: What is being charged.
+        quantity: Amount of units, with up to three decimals.
+        unit_price: Price of one unit in cents.
+        discount_bp: Line discount in basis points.
+        tax_rates: Configured tax rates applied to the discounted net.
+        product: Catalog entry the line was prefilled from, if any.
+    """
+
+    description: str
+    quantity: Decimal
+    unit_price: int
+    discount_bp: int = 0
+    tax_rates: tuple[TaxRate, ...] = ()
+    product: Product | None = None
+
+
+def _snapshot(invoice: Invoice) -> dict[str, Any]:
+    """Describe an invoice and its lines as compact JSON-ready data for the audit log.
+
+    Args:
+        invoice: Saved invoice to describe.
+
+    Returns:
+        The invoice fields and, per line, its amounts and taxes.
+    """
+    lines = [
+        {
+            "position": line.position,
+            "description": line.description,
+            "quantity": str(line.quantity),
+            "unit_price": line.unit_price,
+            "discount_bp": line.discount_bp,
+            "product_id": line.product_id,
+            "net": line.net,
+            "total": line.total,
+            "taxes": [
+                {"name": tax.name, "rate_bp": tax.rate_bp, "amount": tax.amount}
+                for tax in line.taxes.order_by("id")
+            ],
+        }
+        for line in invoice.lines.all()
+    ]
+    return {
+        "kind": invoice.kind,
+        "status": invoice.status,
+        "customer_id": str(invoice.customer_id),
+        "currency": invoice.currency,
+        "notes": invoice.notes,
+        "subtotal": invoice.subtotal,
+        "tax_total": invoice.tax_total,
+        "total": invoice.total,
+        "lines": lines,
+    }
+
+
+def _stored_draft(invoice: Invoice) -> Invoice | None:
+    """Look up the stored copy of an invoice, requiring it to be a draft.
+
+    Args:
+        invoice: Invoice whose stored copy is wanted.
+
+    Returns:
+        The stored invoice, or None when it is not stored for the current tenant.
+
+    Raises:
+        InvalidTransition: When the stored invoice is not a draft.
+    """
+    stored = Invoice.objects.filter(pk=invoice.pk).first()
+    if stored is not None and stored.status != Invoice.Status.DRAFT:
+        raise InvalidTransition(f"invoice is {stored.status}, only a draft can change")
+    return stored
+
+
+@transaction.atomic
+def save_draft(principal: Principal | None, invoice: Invoice, lines: list[DraftLine]) -> Invoice:
+    """Create or update a draft invoice, replacing its lines and storing the calculated totals.
+
+    The invoice, every line and every line tax are validated, so ValidationError is raised for
+    invalid data, including a customer, product or tax rate of another tenant, and then nothing
+    is stored. Each tax keeps the name and rate of its tax rate at this moment. The change is
+    recorded in the audit log as invoice.created or invoice.updated. InvalidTransition is raised
+    when the stored invoice is not a draft.
+
+    Args:
+        principal: Acting principal, who needs invoices:write or PermissionDenied is raised.
+        invoice: Invoice to persist, which becomes a draft. A new invoice without a currency
+            gets the default currency of the tenant.
+        lines: Lines of the invoice in order, replacing the stored ones.
+
+    Returns:
+        The saved invoice with its totals.
+
+    Raises:
+        ValidationError: When a line is out of range.
+    """
+    require_permission(principal, Permission.INVOICES_WRITE)
+    stored = _stored_draft(invoice)
+    before = _snapshot(stored) if stored else None
+    try:
+        totals = invoice_totals(
+            [
+                LineInput(
+                    line.quantity,
+                    line.unit_price,
+                    line.discount_bp,
+                    tuple(TaxRateInput(rate.name, rate.rate_bp) for rate in line.tax_rates),
+                )
+                for line in lines
+            ]
+        )
+    except ValueError as error:
+        raise ValidationError(str(error)) from error
+    if not invoice.currency:
+        invoice.currency = Tenant.objects.get(pk=require_current_tenant_id()).default_currency
+    invoice.status = Invoice.Status.DRAFT
+    invoice.subtotal, invoice.tax_total, invoice.total = (
+        totals.subtotal,
+        totals.tax_total,
+        totals.total,
+    )
+    _clean(invoice)
+    invoice.save()
+    invoice.lines.all().delete()
+    for position, (draft, amounts) in enumerate(zip(lines, totals.lines, strict=True), 1):
+        row = InvoiceLine(
+            invoice=invoice,
+            position=position,
+            product=draft.product,
+            description=draft.description,
+            quantity=draft.quantity,
+            unit_price=draft.unit_price,
+            discount_bp=draft.discount_bp,
+            net=amounts.net,
+            total=amounts.total,
+        )
+        _clean(row)
+        row.save()
+        for rate, amount in zip(draft.tax_rates, amounts.taxes, strict=True):
+            tax = InvoiceLineTax(
+                line=row, tax_rate=rate, name=rate.name, rate_bp=rate.rate_bp, amount=amount
+            )
+            _clean(tax)
+            tax.save()
+    action = "invoice.updated" if stored else "invoice.created"
+    record_event(principal, action, "invoice", invoice.pk, before, _snapshot(invoice))
+    return invoice
+
+
+@transaction.atomic
+def delete_draft(principal: Principal | None, invoice: Invoice) -> None:
+    """Delete a draft invoice with its lines, recording the state it had.
+
+    An invoice that is not stored for the current tenant is left alone. InvalidTransition is
+    raised when the stored invoice is not a draft.
+
+    Args:
+        principal: Acting principal, who needs invoices:write or PermissionDenied is raised.
+        invoice: Draft invoice to remove.
+    """
+    require_permission(principal, Permission.INVOICES_WRITE)
+    stored = _stored_draft(invoice)
+    if stored is None:
+        return
+    record_event(principal, "invoice.deleted", "invoice", stored.pk, _snapshot(stored))
+    stored.delete()

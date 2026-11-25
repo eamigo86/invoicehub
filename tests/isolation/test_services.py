@@ -1,17 +1,29 @@
 """Billing services never act across tenants, whatever the principal holds."""
 
 import uuid
+from decimal import Decimal
 
 import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
 
-from billing.models import AuditEvent, Customer, Product, ProductTaxRate, TaxRate
+from billing.models import (
+    AuditEvent,
+    Customer,
+    Invoice,
+    InvoiceLine,
+    Product,
+    ProductTaxRate,
+    TaxRate,
+)
 from billing.services import (
+    DraftLine,
     delete_customer,
+    delete_draft,
     delete_product,
     delete_tax_rate,
     record_event,
     save_customer,
+    save_draft,
     save_product,
     save_tax_rate,
     update_issuer,
@@ -324,3 +336,123 @@ def test_the_events_of_a_are_invisible_under_b(tenants: tuple[Tenant, Tenant]) -
         assert not AuditEvent._base_manager.filter(pk=event.pk).exists()
     with tenant_context(a.pk):
         assert AuditEvent.objects.get().pk == event.pk
+
+
+def test_b_cannot_invoice_a_customer_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, a draft for A's customer is refused and nothing is stored.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        customer = save_customer(owner_of(a), Customer(name="Acme"))
+    with tenant_context(b.pk):
+        with pytest.raises(ValidationError):
+            save_draft(owner_of(b), Invoice(customer=customer), [])
+        assert (Invoice.objects.count(), AuditEvent.objects.count()) == (0, 0)
+
+
+def test_b_cannot_bill_a_product_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, a line for A's product is refused and no invoice is stored.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        product = save_product(owner_of(a), Product(name="Widget", unit_price=1))
+    with tenant_context(b.pk):
+        customer = save_customer(owner_of(b), Customer(name="Bolt"))
+        line = DraftLine("Widget", Decimal("1"), 1, product=product)
+        with pytest.raises(ValidationError):
+            save_draft(owner_of(b), Invoice(customer=customer), [line])
+        assert (Invoice.objects.count(), InvoiceLine.objects.count()) == (0, 0)
+
+
+def test_b_cannot_tax_a_line_with_a_rate_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, a foreign tax rate is refused and the existing draft keeps its lines.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        foreign = save_tax_rate(owner_of(a), TaxRate(name="Austin", rate_bp=825))
+    with tenant_context(b.pk):
+        customer = save_customer(owner_of(b), Customer(name="Bolt"))
+        draft = save_draft(
+            owner_of(b), Invoice(customer=customer), [DraftLine("Old", Decimal(1), 5)]
+        )
+        line = DraftLine("New", Decimal("1"), 1, tax_rates=(foreign,))
+        with pytest.raises(ValidationError):
+            save_draft(owner_of(b), draft, [line])
+        assert list(draft.lines.values_list("description", flat=True)) == ["Old"]
+
+
+def test_b_cannot_modify_a_draft_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, saving A's draft is refused, since B cannot see its customer, and A is untouched.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        customer = save_customer(owner_of(a), Customer(name="Acme"))
+        draft = save_draft(
+            owner_of(a), Invoice(customer=customer), [DraftLine("Old", Decimal(1), 5)]
+        )
+    with tenant_context(b.pk), pytest.raises(ValidationError):
+        save_draft(owner_of(b), draft, [DraftLine("Hacked", Decimal(1), 1)])
+    with tenant_context(a.pk):
+        assert list(draft.lines.values_list("description", flat=True)) == ["Old"]
+
+
+def test_b_cannot_delete_a_draft_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, deleting A's draft is a no-op, because Row-Level Security hides the row.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(a.pk):
+        customer = save_customer(owner_of(a), Customer(name="Acme"))
+        draft = save_draft(owner_of(a), Invoice(customer=customer), [])
+    with tenant_context(b.pk):
+        delete_draft(owner_of(b), draft)
+        assert AuditEvent.objects.count() == 0
+    with tenant_context(a.pk):
+        assert Invoice.objects.filter(pk=draft.pk).exists()
+
+
+def test_a_principal_of_a_cannot_save_a_draft_while_b_is_current(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """A principal of A holding invoices:write is refused under B and nothing is stored.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(b.pk):
+        customer = save_customer(owner_of(b), Customer(name="Bolt"))
+        with pytest.raises(PermissionDenied):
+            save_draft(owner_of(a), Invoice(customer=customer), [])
+        assert Invoice.objects.count() == 0
+
+
+def test_a_principal_of_a_cannot_delete_a_draft_while_b_is_current(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """A principal of A cannot delete B's draft while B is current.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    with tenant_context(b.pk):
+        customer = save_customer(owner_of(b), Customer(name="Bolt"))
+        draft = save_draft(owner_of(b), Invoice(customer=customer), [])
+        with pytest.raises(PermissionDenied):
+            delete_draft(owner_of(a), draft)
+        assert Invoice.objects.filter(pk=draft.pk).exists()
