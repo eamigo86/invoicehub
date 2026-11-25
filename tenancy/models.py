@@ -1,16 +1,33 @@
 """Tenancy models."""
 
 import uuid
+import zoneinfo
 from typing import Any
 
 from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
+from django.core.exceptions import ValidationError
+from django.core.validators import RegexValidator
 from django.db import models
 
+from core.models import Currency, PostalAddress
 from tenancy.context import TenantMismatch, require_current_tenant_id
 
 
-class Tenant(models.Model):
+def validate_timezone(value: str) -> None:
+    """Check that a value is an IANA timezone name known to zoneinfo.
+
+    Args:
+        value: Timezone name to check.
+
+    Raises:
+        ValidationError: When the name is not an available timezone.
+    """
+    if value not in zoneinfo.available_timezones():
+        raise ValidationError("Unknown timezone: %(value)s.", params={"value": value})
+
+
+class Tenant(PostalAddress):
     """A customer organisation that owns tenant-scoped data.
 
     This table is the tenant registry, not tenant-owned data, so it deliberately has no
@@ -21,6 +38,16 @@ class Tenant(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=200)
     created_at = models.DateTimeField(auto_now_add=True)
+    legal_name = models.CharField(max_length=200, blank=True)
+    ein = models.CharField(
+        max_length=10,
+        blank=True,
+        validators=[RegexValidator(r"^\d{2}-\d{7}$", "Enter an EIN as NN-NNNNNNN.")],
+    )
+    default_currency = models.CharField(max_length=3, choices=Currency, default=Currency.USD)
+    timezone = models.CharField(
+        max_length=64, default="America/New_York", validators=[validate_timezone]
+    )
 
     def __str__(self) -> str:
         """Return the tenant name.

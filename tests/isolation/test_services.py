@@ -4,7 +4,7 @@ import pytest
 from django.core.exceptions import PermissionDenied
 
 from billing.models import Customer
-from billing.services import delete_customer, save_customer
+from billing.services import delete_customer, save_customer, update_issuer
 from tenancy.context import TenantMismatch, tenant_context
 from tenancy.models import Tenant
 from tenancy.permissions import Permission, Principal
@@ -93,3 +93,31 @@ def test_a_principal_of_a_cannot_delete_while_b_is_current(
         with pytest.raises(PermissionDenied):
             delete_customer(owner_of(a), customer)
         assert Customer.objects.filter(pk=customer.pk).exists()
+
+
+def test_a_principal_of_a_cannot_update_the_issuer_while_b_is_current(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """A owner of A is refused under B and B's issuer data is unchanged.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    b.legal_name = "Hijacked"
+    with tenant_context(b.pk), pytest.raises(PermissionDenied):
+        update_issuer(owner_of(a), b)
+    assert Tenant.objects.get(pk=b.pk).legal_name == ""
+
+
+def test_an_owner_of_b_cannot_update_the_issuer_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """A owner of B who passes tenant A's instance is refused and A is unchanged.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    a.legal_name = "Hijacked"
+    with tenant_context(b.pk), pytest.raises(PermissionDenied):
+        update_issuer(owner_of(b), a)
+    assert Tenant.objects.get(pk=a.pk).legal_name == ""
