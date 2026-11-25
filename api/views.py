@@ -20,18 +20,20 @@ class ProtectedGraphQLView(GraphQLView):
         """Choose the execution middleware for one request.
 
         Introspection is open when DEBUG is on or when the request token is a development
-        token, and refused for every other request.
+        token, and refused for every other request. The configured graphex middleware is kept
+        in both cases.
 
         Args:
             request: Incoming request, already authenticated by the token middleware.
 
         Returns:
-            An empty chain when introspection is allowed, else the introspection blocker.
+            The configured chain, followed by the introspection blocker unless it is allowed.
         """
+        chain = list(super().get_middleware(request) or [])
         principal = request_principal(request)
         if settings.DEBUG or (principal is not None and principal.allow_introspection):
-            return []
-        return [DisableIntrospectionMiddleware()]
+            return chain
+        return [*chain, DisableIntrospectionMiddleware()]
 
 
 _graphql = ProtectedGraphQLView.as_view(schema=schema)

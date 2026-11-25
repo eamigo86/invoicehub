@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 from django_graphex.settings import graphql_api_settings
+from django_graphex.views import GraphQLView
 
 from tenancy.models import ApiToken, Membership, Tenant
 from tenancy.permissions import Principal
@@ -118,6 +119,32 @@ def test_introspection_is_open_in_debug(settings: Any) -> None:
     settings.DEBUG = True
     _, token = make_world("A", ["invoices:read"])
     assert "errors" not in post(INTROSPECTION, token).json()
+
+
+def test_the_introspection_choice_keeps_the_configured_middleware(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Configured graphex middleware stays in the chain, with or without the blocker.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    from django.test import RequestFactory
+
+    from api.views import ProtectedGraphQLView
+    from tenancy.permissions import set_request_principal
+
+    configured = object()
+    monkeypatch.setattr(GraphQLView, "get_middleware", lambda self, request: [configured])
+    tenant, _ = make_world("A", ["invoices:read"])
+    view = ProtectedGraphQLView(schema=None)
+    for allowed in (False, True):
+        request = RequestFactory().post("/graphql/")
+        set_request_principal(
+            request,
+            Principal(tenant.pk, frozenset(), token_id=1, allow_introspection=allowed),
+        )
+        assert view.get_middleware(request)[0] is configured
 
 
 QUERY = "{ invoices { totalCount } }"
