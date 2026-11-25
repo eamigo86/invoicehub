@@ -12,6 +12,7 @@ from typing import Any
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.db import IntegrityError, transaction
+from django.db.models import QuerySet
 from django.utils import timezone
 
 from billing.models import Invoice, Payment
@@ -37,6 +38,38 @@ from tenancy.permissions import Permission, Principal, require_permission
 
 MAX_STATEMENT_BYTES = 10 * 1024 * 1024
 """Largest bank statement, in bytes, that an upload may have."""
+
+
+def list_reconciliation_runs(principal: Principal | None) -> QuerySet[ReconciliationRun]:
+    """Return the reconciliation runs the principal may read in the current tenant.
+
+    Reading needs the invoice read permission, since there is no reconciliation read
+    permission: a viewer may look at the queue but not act on it.
+
+    Args:
+        principal: Acting principal, who needs invoices:read or PermissionDenied is raised.
+
+    Returns:
+        A queryset of the runs of the current tenant.
+    """
+    require_permission(principal, Permission.INVOICES_READ)
+    return ReconciliationRun.objects.all()
+
+
+def list_match_proposals(principal: Principal | None) -> QuerySet[MatchProposal]:
+    """Return the match proposals the principal may read in the current tenant.
+
+    Reading needs the invoice read permission, since there is no reconciliation read
+    permission: a viewer may look at the queue but not act on it.
+
+    Args:
+        principal: Acting principal, who needs invoices:read or PermissionDenied is raised.
+
+    Returns:
+        A queryset of the proposals of the current tenant.
+    """
+    require_permission(principal, Permission.INVOICES_READ)
+    return MatchProposal.objects.all()
 
 
 @transaction.atomic

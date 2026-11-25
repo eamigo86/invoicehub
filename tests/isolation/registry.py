@@ -578,6 +578,9 @@ def service_functions(module_name: str) -> list[str]:
 SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
     {
         "billing.services.list_invoices",
+        "billing.services.list_customers",
+        "billing.services.list_products",
+        "billing.services.list_payments",
         "billing.services.save_customer",
         "billing.services.delete_customer",
         "billing.services.update_issuer",
@@ -602,6 +605,8 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "reconciliation.services.reject_proposal",
         "reconciliation.services.reassign_proposal",
         "reconciliation.services.undo_proposal",
+        "reconciliation.services.list_reconciliation_runs",
+        "reconciliation.services.list_match_proposals",
     }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.
@@ -622,7 +627,16 @@ def graphql_root_fields(graphql_schema: GraphQLSchema) -> list[str]:
     return sorted(f"{root.name}.{name}" for root in roots if root for name in root.fields)
 
 
-GRAPHQL_ISOLATION_CASES: frozenset[str] = frozenset({"Query.invoices"})
+GRAPHQL_ISOLATION_CASES: frozenset[str] = frozenset(
+    {
+        "Query.invoices",
+        "Query.customers",
+        "Query.products",
+        "Query.payments",
+        "Query.reconciliationRuns",
+        "Query.matchProposals",
+    }
+)
 """Query and Mutation fields that have isolation cases; add every new root field here.
 
 The cases are in test_graphql."""
