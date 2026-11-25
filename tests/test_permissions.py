@@ -7,6 +7,7 @@ from django.core.exceptions import PermissionDenied
 
 from accounts.models import User
 from tenancy import permissions
+from tenancy.context import tenant_context
 from tenancy.models import Membership, Tenant
 
 
@@ -75,3 +76,15 @@ def test_require_permission_raises_permission_denied_unless_held() -> None:
         permissions.require_permission(principal, write)
     with pytest.raises(PermissionDenied):
         permissions.require_permission(None, read)
+
+
+@pytest.mark.django_db
+def test_require_permission_refuses_a_principal_of_another_active_tenant() -> None:
+    """A principal holding the permission is still refused while another tenant is active."""
+    write = permissions.Permission.INVOICES_WRITE
+    a, b = Tenant.objects.create(name="A"), Tenant.objects.create(name="B")
+    principal = permissions.Principal(a.pk, frozenset({write}))
+    with tenant_context(a.pk):
+        permissions.require_permission(principal, write)
+    with tenant_context(b.pk), pytest.raises(PermissionDenied):
+        permissions.require_permission(principal, write)

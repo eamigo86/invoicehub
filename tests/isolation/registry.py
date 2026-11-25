@@ -4,9 +4,14 @@ Adding a tenant model without a factory here fails the meta-test, which is how e
 gets its isolation cases: the parametrized suite runs against whatever this registry holds.
 """
 
+import importlib
+import importlib.util
+import inspect
+import pkgutil
 import uuid
 from collections.abc import Callable, Sequence
 
+from celery import Celery
 from django.apps import apps
 from django.apps.registry import Apps
 from django.db import models
@@ -143,3 +148,74 @@ URL_ISOLATION_CASES: frozenset[str] = frozenset({"tenancy:list", "tenancy:select
 """Names of the project URLs that have isolation cases; add every new project URL name here.
 
 The cases for the tenancy URLs are in test_tenant_selection."""
+
+
+def project_service_functions(
+    registry: Apps = apps, labels: tuple[str, ...] = BUSINESS_APPS
+) -> list[str]:
+    """List the public functions defined in the services module of each business app.
+
+    Imported names are left out, and apps without a services module are skipped.
+
+    Args:
+        registry: App registry to inspect.
+        labels: Business app labels to inspect, which must all be installed in the registry.
+
+    Returns:
+        The dotted names such as billing.services.save_customer, ordered.
+    """
+    names: list[str] = []
+    for label in labels:
+        module_name = f"{registry.get_app_config(label).name}.services"
+        if importlib.util.find_spec(module_name) is not None:
+            names.extend(service_functions(module_name))
+    return sorted(names)
+
+
+def service_functions(module_name: str) -> list[str]:
+    """List the public functions defined in a services module, or in every module of a package.
+
+    Args:
+        module_name: Dotted name of the services module or package.
+
+    Returns:
+        The dotted names of the functions defined there, imported names left out, ordered.
+    """
+    module = importlib.import_module(module_name)
+    modules = [module]
+    if hasattr(module, "__path__"):
+        modules += [
+            importlib.import_module(info.name)
+            for info in pkgutil.walk_packages(module.__path__, f"{module_name}.")
+        ]
+    return sorted(
+        f"{mod.__name__}.{name}"
+        for mod in modules
+        for name, func in inspect.getmembers(mod, inspect.isfunction)
+        if func.__module__ == mod.__name__ and not name.startswith("_")
+    )
+
+
+SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
+    {"billing.services.save_customer", "billing.services.delete_customer"}
+)
+"""Dotted names of the service functions that have isolation cases; add every new one here.
+
+The cases are in test_services."""
+
+
+def project_task_names(celery_app: Celery) -> list[str]:
+    """List the Celery tasks registered by project modules.
+
+    Args:
+        celery_app: Celery application whose task registry is inspected, after autodiscovery.
+
+    Returns:
+        The task names, built-in celery.* tasks left out, ordered.
+    """
+    celery_app.loader.import_default_modules()
+    return sorted(name for name in celery_app.tasks if not name.startswith("celery."))
+
+
+TASK_ISOLATION_CASES: frozenset[str] = frozenset()
+"""Names of the Celery tasks that have isolation cases; add every new task here."""

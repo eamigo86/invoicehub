@@ -17,10 +17,13 @@ from accounts.models import User
 from billing.models import Customer
 from tenancy.context import tenant_context
 from tenancy.models import Membership, Tenant
+from tenancy.permissions import Principal
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 LIST_URL = "/admin/billing/customer/"
+
+Service = Callable[[Principal | None, Customer], Any]
 
 
 def login(client: Client, tenant_id: uuid.UUID | None) -> None:
@@ -65,7 +68,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     """
     log: list[tuple[str, str]] = []
 
-    def wrap(name: str, func: Callable[[Customer], Any]) -> Callable[[Customer], Any]:
+    def wrap(name: str, func: Service) -> Service:
         """Wrap a service so that its calls are recorded.
 
         Args:
@@ -76,17 +79,18 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
             The recording wrapper.
         """
 
-        def inner(customer: Customer) -> Any:
+        def inner(principal: Principal | None, customer: Customer) -> Any:
             """Record and delegate.
 
             Args:
+                principal: Principal passed to the service.
                 customer: Customer passed to the service.
 
             Returns:
                 Whatever the service returns.
             """
             log.append((name, customer.name))
-            return func(customer)
+            return func(principal, customer)
 
         return inner
 

@@ -1,6 +1,9 @@
 """Meta-tests that keep the isolation suite complete as models are added."""
 
+from pathlib import Path
+
 import pytest
+from celery import Celery
 from django.contrib import admin
 from django.db import connection, models
 from django.http import HttpRequest, HttpResponse
@@ -12,11 +15,16 @@ from tenancy.models import Tenant, TenantModel
 from tenancy.operations import POLICY, POLICY_QUAL
 from tests.isolation.registry import (
     FACTORIES,
+    SERVICE_ISOLATION_CASES,
+    TASK_ISOLATION_CASES,
     TENANT_FK_ALLOWLIST,
     URL_ISOLATION_CASES,
     concrete_tenant_models,
     non_tenant_models,
+    project_service_functions,
+    project_task_names,
     project_url_names,
+    service_functions,
     unprotected_tenant_fk_models,
 )
 
@@ -193,3 +201,58 @@ def test_the_url_check_skips_admin_allauth_and_unnamed_patterns() -> None:
         "shop:list",
         "new",
     ]
+
+
+def test_every_service_function_has_isolation_cases() -> None:
+    """A public service function added without listing it in the registry fails here."""
+    names = project_service_functions()
+    assert names, "no service function found, the check would be vacuous"
+    assert sorted(set(names) - SERVICE_ISOLATION_CASES) == []
+
+
+def test_service_discovery_finds_own_functions_and_skips_imports_and_missing_modules() -> None:
+    """Only functions defined in a services module are found, apps without one are skipped."""
+    names = project_service_functions()
+    assert "billing.services.save_customer" in names
+    assert "billing.services.require_permission" not in names
+    assert project_service_functions(labels=("billing", "assistant")) == [
+        n for n in names if n.startswith("billing.")
+    ]
+
+
+def test_service_discovery_walks_the_submodules_of_a_services_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A services package is walked, so functions re-exported from submodules are not lost.
+
+    Args:
+        tmp_path: Directory where a sample services package is written.
+        monkeypatch: Fixture that puts the directory on the import path.
+    """
+    package = tmp_path / "sampleapp" / "services"
+    package.mkdir(parents=True)
+    (tmp_path / "sampleapp" / "__init__.py").write_text("")
+    (package / "__init__.py").write_text("from .invoices import issue\n")
+    (package / "invoices.py").write_text("def issue():\n    pass\n\n\ndef _helper():\n    pass\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert service_functions("sampleapp.services") == ["sampleapp.services.invoices.issue"]
+
+
+def test_every_celery_task_has_isolation_cases() -> None:
+    """A Celery task added without listing it in the registry fails here."""
+    from config.celery import app
+
+    assert sorted(set(project_task_names(app)) - TASK_ISOLATION_CASES) == []
+
+
+def test_task_discovery_reports_project_tasks_and_excludes_celery_builtins() -> None:
+    """A task registered on an app is found, while celery.* built-ins are never reported."""
+    scratch = Celery("scratch", set_as_current=False)
+
+    @scratch.task(name="billing.tasks.example")  # type: ignore[untyped-decorator]
+    def example() -> None:
+        """Run a task that does nothing."""
+
+    assert example is not None
+    assert any(name.startswith("celery.") for name in scratch.tasks)
+    assert project_task_names(scratch) == ["billing.tasks.example"]
