@@ -1,13 +1,39 @@
 """The GraphQL endpoint, open to API tokens only."""
 
+from typing import Any
+
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django_graphex.security import DisableIntrospectionMiddleware
 from django_graphex.views import GraphQLView
 
 from api.schema import schema
 from tenancy.permissions import request_principal
 
-_graphql = GraphQLView.as_view(schema=schema)
+
+class ProtectedGraphQLView(GraphQLView):
+    """GraphQL view that refuses schema introspection unless DEBUG or the token allows it."""
+
+    def get_middleware(self, request: HttpRequest) -> Any:
+        """Choose the execution middleware for one request.
+
+        Introspection is open when DEBUG is on or when the request token is a development
+        token, and refused for every other request.
+
+        Args:
+            request: Incoming request, already authenticated by the token middleware.
+
+        Returns:
+            An empty chain when introspection is allowed, else the introspection blocker.
+        """
+        principal = request_principal(request)
+        if settings.DEBUG or (principal is not None and principal.allow_introspection):
+            return []
+        return [DisableIntrospectionMiddleware()]
+
+
+_graphql = ProtectedGraphQLView.as_view(schema=schema)
 
 
 @csrf_exempt

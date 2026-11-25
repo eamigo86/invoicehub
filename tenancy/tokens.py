@@ -31,7 +31,11 @@ def hash_token(raw: str) -> str:
 
 
 def issue_token(
-    principal: Principal | None, name: str, scopes: list[str], created_by: User | None = None
+    principal: Principal | None,
+    name: str,
+    scopes: list[str],
+    created_by: User | None = None,
+    allow_introspection: bool = False,
 ) -> tuple[ApiToken, str]:
     """Issue an API token for the tenant of the acting principal.
 
@@ -40,6 +44,8 @@ def issue_token(
         name: Display name of the token.
         scopes: Scopes to grant, a non-empty subset of the token scopes.
         created_by: User who asks for the token, kept for audit.
+        allow_introspection: Whether this is a development token, which may read the GraphQL
+            schema even when DEBUG is off.
 
     Returns:
         The stored token and its plaintext, which is never available again.
@@ -63,6 +69,7 @@ def issue_token(
         token_hash=hash_token(plaintext),
         scopes=unique,
         created_by=created_by,
+        allow_introspection=allow_introspection,
     )
     return token, plaintext
 

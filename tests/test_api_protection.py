@@ -5,6 +5,9 @@ from typing import Any
 import pytest
 from django_graphex.settings import graphql_api_settings
 
+from tenancy.models import ApiToken, Membership, Tenant
+from tenancy.permissions import Principal
+from tenancy.tokens import issue_token
 from tests.test_api_graphql import make_world, post
 from tests.test_api_queries import NESTED
 
@@ -56,3 +59,56 @@ def test_alias_amplification_over_the_cost_limit_is_a_client_error() -> None:
     response = post(ALIASED, token)
     assert response.status_code == 400
     assert "cost" in response.json()["errors"][0]["message"].lower()
+
+
+INTROSPECTION = "{ __schema { queryType { name } } }"
+
+
+def dev_token(tenant: Tenant) -> str:
+    """Issue a development token, one that may introspect, in a tenant.
+
+    Args:
+        tenant: Tenant that already has an owner membership.
+
+    Returns:
+        The plaintext token.
+    """
+    membership = Membership.objects.get(tenant=tenant)
+    token, plaintext = issue_token(
+        Principal.from_membership(membership), "dev", ["invoices:read"], allow_introspection=True
+    )
+    assert token.allow_introspection
+    return plaintext
+
+
+def test_a_token_is_not_a_development_token_by_default() -> None:
+    """The flag is opt-in at issue time."""
+    tenant, _ = make_world("A", ["invoices:read"])
+    assert not ApiToken.objects.get(tenant=tenant).allow_introspection
+
+
+def test_introspection_is_refused_for_an_ordinary_token() -> None:
+    """Outside DEBUG a normal token cannot read the schema, but __typename still works."""
+    _, token = make_world("A", ["invoices:read"])
+    body = post(INTROSPECTION, token).json()
+    assert body["errors"][0]["extensions"]["code"] == "INTROSPECTION_DISABLED"
+    assert post("{ __typename }", token).json() == {"data": {"__typename": "Query"}}
+
+
+def test_a_development_token_may_introspect() -> None:
+    """The flag opens introspection for that token only."""
+    tenant, ordinary = make_world("A", ["invoices:read"])
+    body = post(INTROSPECTION, dev_token(tenant)).json()
+    assert body == {"data": {"__schema": {"queryType": {"name": "Query"}}}}
+    assert "errors" in post(INTROSPECTION, ordinary).json()
+
+
+def test_introspection_is_open_in_debug(settings: Any) -> None:
+    """With DEBUG on, any token may introspect.
+
+    Args:
+        settings: Pytest-django settings fixture.
+    """
+    settings.DEBUG = True
+    _, token = make_world("A", ["invoices:read"])
+    assert "errors" not in post(INTROSPECTION, token).json()
