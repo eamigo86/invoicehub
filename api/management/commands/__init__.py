@@ -1,0 +1,1 @@
+"""Commands: schema contract check."""
