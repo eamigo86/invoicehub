@@ -2,7 +2,7 @@
 
 import threading
 from collections.abc import Generator
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -294,6 +294,23 @@ def test_non_positive_allocations_are_refused(
     assert Payment.objects.count() == 0
 
 
+def test_a_recorded_payment_cannot_be_recorded_again(writer: Principal, customer: Customer) -> None:
+    """Passing a stored payment again is refused, so a recorded amount is never rewritten.
+
+    Args:
+        writer: Principal allowed to write invoices.
+        customer: Customer to invoice.
+    """
+    invoice = issued_invoice(writer, customer, cents=2000)
+    other = issued_invoice(writer, customer, cents=2000)
+    payment = pay(writer, [(invoice, 500)])
+    payment.amount = 9999
+    with pytest.raises(InvalidTransition):
+        record_payment(writer, payment, [(other, 500)])
+    assert Payment.objects.get().amount == 500
+    assert PaymentAllocation.objects.count() == 1
+
+
 def test_a_non_positive_payment_is_refused(writer: Principal, customer: Customer) -> None:
     """A payment of zero cents is refused by validation.
 
@@ -491,3 +508,85 @@ def test_concurrent_payments_cannot_overpay_an_invoice() -> None:
         assert stored(invoice).status == Invoice.Status.PARTIALLY_PAID
         assert stored(invoice).balance_due() == 400
         assert Payment.objects.count() == 1
+
+
+def due_date(invoice: Invoice) -> date:
+    """Read the due date of an issued invoice.
+
+    Args:
+        invoice: Issued invoice, which always has a due date.
+
+    Returns:
+        Its due date.
+    """
+    assert invoice.due_date is not None
+    return invoice.due_date
+
+
+def test_an_unpaid_invoice_is_overdue_only_after_its_due_date(
+    writer: Principal, customer: Customer
+) -> None:
+    """Due today is not overdue; the day after it is.
+
+    Args:
+        writer: Principal allowed to write invoices.
+        customer: Customer to invoice.
+    """
+    invoice = issued_invoice(writer, customer)
+    due = due_date(invoice)
+    assert not invoice.is_overdue(due - timedelta(days=1))
+    assert not invoice.is_overdue(due)
+    assert invoice.is_overdue(due + timedelta(days=1))
+
+
+def test_a_partially_paid_invoice_is_overdue_but_a_paid_one_never(
+    writer: Principal, customer: Customer
+) -> None:
+    """A balance keeps an invoice overdue; once paid it never is.
+
+    Args:
+        writer: Principal allowed to write invoices.
+        customer: Customer to invoice.
+    """
+    invoice = issued_invoice(writer, customer)
+    late = due_date(invoice) + timedelta(days=90)
+    pay(writer, [(invoice, 400)])
+    assert stored(invoice).is_overdue(late)
+    pay(writer, [(invoice, 600)])
+    assert not stored(invoice).is_overdue(late)
+
+
+def test_a_zero_balance_is_never_overdue_whatever_the_status(
+    writer: Principal, customer: Customer
+) -> None:
+    """Credits that cover the total leave nothing owed, so the invoice is not overdue.
+
+    Args:
+        writer: Principal allowed to write invoices.
+        customer: Customer to invoice.
+    """
+    invoice = issued_invoice(writer, customer)
+    late = due_date(invoice) + timedelta(days=90)
+    issue_invoice(writer, draft_credit_note(writer, invoice))
+    assert not stored(invoice).is_overdue(late)
+
+
+def test_drafts_and_credit_notes_are_never_overdue(writer: Principal, customer: Customer) -> None:
+    """Only an issued invoice with a due date can be overdue.
+
+    Args:
+        writer: Principal allowed to write invoices.
+        customer: Customer to invoice.
+    """
+    draft = save_draft(
+        writer,
+        Invoice(customer=customer, due_date=date(2020, 1, 1)),
+        [DraftLine("W", Decimal(1), 100)],
+    )
+    assert not draft.is_overdue(date(2030, 1, 1))
+    invoice = issued_invoice(writer, customer)
+    note = issue_invoice(
+        writer, draft_credit_note(writer, invoice, [DraftLine("Credit", Decimal(1), 100)])
+    )
+    assert not note.is_overdue(due_date(note) + timedelta(days=90))
+    assert not Invoice(status=Invoice.Status.ISSUED).is_overdue(date(2030, 1, 1))

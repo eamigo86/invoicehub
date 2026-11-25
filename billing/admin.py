@@ -12,7 +12,17 @@ from unfold.admin import TabularInline  # type: ignore[import-untyped]
 from tenancy.admin import TenantModelAdmin
 from tenancy.permissions import Permission, has_permission, request_principal
 
-from .models import AuditEvent, Customer, Invoice, InvoiceLine, InvoiceSeries, Product, TaxRate
+from .models import (
+    AuditEvent,
+    Customer,
+    Invoice,
+    InvoiceLine,
+    InvoiceSeries,
+    Payment,
+    PaymentAllocation,
+    Product,
+    TaxRate,
+)
 from .services import (
     InvalidTransition,
     delete_customer,
@@ -507,6 +517,58 @@ class InvoiceAdmin(TenantModelAdmin):
 
     def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
         """Refuse deleting invoices, which only the services remove.
+
+        Args:
+            request: Current request.
+            obj: Object being deleted, if any.
+
+        Returns:
+            False.
+        """
+        return False
+
+
+class PaymentAllocationInline(ReadOnlyInline):
+    """The allocations of a payment, read-only."""
+
+    model = PaymentAllocation
+    fields = ("invoice", "amount")
+
+
+@admin.register(Payment)
+class PaymentAdmin(TenantModelAdmin):
+    """Read-only admin for the active tenant's payments; the services record them."""
+
+    list_display = ("value_date", "amount", "currency", "source", "reference")
+    list_filter = ("source", "currency")
+    search_fields = ("reference",)
+    inlines = [PaymentAllocationInline]
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        """Refuse adding payments, which only record_payment creates.
+
+        Args:
+            request: Current request.
+
+        Returns:
+            False.
+        """
+        return False
+
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        """Refuse changing payments, so the stored amounts stay as recorded.
+
+        Args:
+            request: Current request.
+            obj: Object being changed, if any.
+
+        Returns:
+            False.
+        """
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        """Refuse deleting payments, which would unbalance the invoices they settle.
 
         Args:
             request: Current request.

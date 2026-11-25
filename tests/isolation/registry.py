@@ -200,7 +200,7 @@ ADMIN_MARKER_FIELDS: dict[type[TenantModel], str] = {
 Every other form value comes from the admin's own change form, so the POST stays valid."""
 
 
-READ_ONLY_ADMINS: frozenset[type[TenantModel]] = frozenset({AuditEvent, Invoice})
+READ_ONLY_ADMINS: frozenset[type[TenantModel]] = frozenset({AuditEvent, Invoice, Payment})
 """Models whose admin refuses every add, change and delete for everyone.
 
 The admin isolation suite expects writes to be refused for these and still runs every

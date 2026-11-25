@@ -1,6 +1,7 @@
 """Credit notes: full and partial credits, voiding the original, limits and refusals."""
 
 from collections.abc import Generator
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -8,12 +9,13 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
 
 from accounts.models import User
-from billing.models import AuditEvent, Customer, Invoice, InvoiceSeries, TaxRate
+from billing.models import AuditEvent, Customer, Invoice, InvoiceSeries, Payment, TaxRate
 from billing.services import (
     DraftLine,
     InvalidTransition,
     draft_credit_note,
     issue_invoice,
+    record_payment,
     save_draft,
 )
 from tenancy.context import tenant_context
@@ -395,3 +397,70 @@ def test_the_kind_decides_whether_an_original_is_required(customer: Customer) ->
         Invoice.objects.create(customer=customer, currency="USD", kind=Invoice.Kind.CREDIT_NOTE)
     with pytest.raises(IntegrityError), transaction.atomic():
         Invoice.objects.create(customer=customer, currency="USD", original=invoice)
+
+
+def paid(writer: Principal, invoice: Invoice, cents: int) -> None:
+    """Record a payment that applies cents to an invoice.
+
+    Args:
+        writer: Principal allowed to write invoices.
+        invoice: Invoice to pay.
+        cents: Amount of the payment, applied entirely to the invoice.
+    """
+    payment = Payment(amount=cents, currency="USD", value_date=date(2026, 6, 15))
+    record_payment(writer, payment, [(invoice, cents)])
+
+
+def test_a_credit_note_that_leaves_nothing_owed_marks_the_original_paid(
+    writer: Principal, customer: Customer
+) -> None:
+    """Payments plus credits that cover the total set paid, without voiding the original.
+
+    Args:
+        writer: Principal allowed to write invoices.
+        customer: Customer to invoice.
+    """
+    original = issued_invoice(writer, customer)
+    paid(writer, original, 600)
+    assert status_of(original) == Invoice.Status.PARTIALLY_PAID
+    credit(writer, original, 400)
+    assert status_of(original) == Invoice.Status.PAID
+    event = AuditEvent.objects.get(action="invoice.paid", entity_id=original.pk)
+    assert (event.before, event.after) == (
+        {"status": "partially_paid"},
+        {"status": "paid"},
+    )
+    assert not AuditEvent.objects.filter(action="invoice.voided").exists()
+
+
+def test_a_credit_note_that_leaves_a_balance_keeps_the_status(
+    writer: Principal, customer: Customer
+) -> None:
+    """A credit that does not cover what is still owed leaves partially paid as it was.
+
+    Args:
+        writer: Principal allowed to write invoices.
+        customer: Customer to invoice.
+    """
+    original = issued_invoice(writer, customer)
+    paid(writer, original, 600)
+    credit(writer, original, 300)
+    assert status_of(original) == Invoice.Status.PARTIALLY_PAID
+    assert original.balance_due() == 100
+
+
+def test_credits_that_reach_the_total_void_even_with_payments(
+    writer: Principal, customer: Customer
+) -> None:
+    """When the credits equal the total the original is voided, as without payments.
+
+    Args:
+        writer: Principal allowed to write invoices.
+        customer: Customer to invoice.
+    """
+    original = issued_invoice(writer, customer)
+    paid(writer, original, 600)
+    credit(writer, original, 1000)
+    assert status_of(original) == Invoice.Status.VOIDED
+    assert AuditEvent.objects.filter(action="invoice.voided", entity_id=original.pk).exists()
+    assert not AuditEvent.objects.filter(action="invoice.paid").exists()

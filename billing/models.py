@@ -1,6 +1,7 @@
 """Billing models."""
 
 import uuid
+from datetime import date
 
 from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
@@ -214,6 +215,9 @@ class Invoice(TenantModel):
         PAID = "paid"
         VOIDED = "voided"
 
+    PAYABLE_STATUSES = (Status.ISSUED, Status.SENT, Status.PARTIALLY_PAID)
+    """Statuses of an invoice that can still receive a payment."""
+
     id = models.UUIDField(
         primary_key=True, default=uuid.uuid4, db_default=RandomUUID(), editable=False
     )
@@ -274,6 +278,24 @@ class Invoice(TenantModel):
         """
         allocated: int = self.allocations.aggregate(total=Sum("amount"))["total"] or 0
         return self.total - self.credited_total() - allocated
+
+    def is_overdue(self, today: date) -> bool:
+        """Tell whether the invoice is overdue; this is derived and never stored.
+
+        Args:
+            today: The current day in the timezone of the tenant, which the caller computes.
+
+        Returns:
+            True for an invoice that can still be paid, whose due date is before today and
+            that still has a balance due.
+        """
+        return (
+            self.kind == Invoice.Kind.INVOICE
+            and self.status in self.PAYABLE_STATUSES
+            and self.due_date is not None
+            and self.due_date < today
+            and self.balance_due() > 0
+        )
 
     def __str__(self) -> str:
         """Describe the invoice by customer and status.
