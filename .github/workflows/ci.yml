@@ -81,7 +81,7 @@ jobs:
             echo "No base revision to compare with; skipping the schema contract check."
             exit 0
           fi
-          if ! git cat-file -e FETCH_HEAD:schema.graphql; then
+          if ! git cat-file -e FETCH_HEAD:schema.graphql 2>/dev/null; then
             echo "The base has no schema.graphql yet; skipping the schema contract check."
             exit 0
           fi

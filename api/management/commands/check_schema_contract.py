@@ -44,5 +44,5 @@ class Command(BaseCommand):
         for description in broken:
             self.stderr.write(f"breaking: {description}")
         if broken:
-            raise CommandError(f"{len(broken)} breaking changes against the base schema")
+            raise CommandError(f"{len(broken)} breaking change(s) against the base schema")
         self.stdout.write(self.style.SUCCESS("The schema is compatible with the base."))

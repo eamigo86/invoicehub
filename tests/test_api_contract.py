@@ -180,7 +180,7 @@ def test_the_command_fails_and_prints_each_breaking_change(tmp_path: Path) -> No
     base_file = tmp_path / "base.graphql"
     base_file.write_text(base, encoding="utf-8")
     err = StringIO()
-    with pytest.raises(CommandError, match="2 breaking changes"):
+    with pytest.raises(CommandError, match=r"2 breaking change\(s\)"):
         call_command("check_schema_contract", base=str(base_file), stderr=err)
     assert "breaking: Field Query.legacy was removed." in err.getvalue()
     assert "breaking: Field Query.old was removed." in err.getvalue()
