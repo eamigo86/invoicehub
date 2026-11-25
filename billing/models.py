@@ -321,6 +321,44 @@ class Invoice(TenantModel):
         return f"{self.customer} {self.status} {self.kind}"
 
 
+class InvoiceEmail(TenantModel):
+    """A request to email an invoice with its PDF, identified by an idempotency key.
+
+    The request is stored when the send is asked for and the Celery task delivers it, so the
+    same key never produces a second request and a delivered one is never sent again.
+
+    Attributes:
+        invoice: Invoice to send, protected against deletion.
+        idempotency_key: Caller-chosen key, unique within the tenant.
+        recipients: Addresses the email goes to.
+        sent_at: When the email was delivered, empty until then.
+        created_at: When the request was stored.
+    """
+
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="emails")
+    idempotency_key = models.CharField(max_length=100)
+    recipients = ArrayField(models.EmailField())
+    sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Model options."""
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "idempotency_key"], name="invoiceemail_tenant_key_uniq"
+            )
+        ]
+
+    def __str__(self) -> str:
+        """Describe the request by invoice and key.
+
+        Returns:
+            A label such as email of invoice 1c2d (key abc).
+        """
+        return f"email of invoice {self.invoice_id} (key {self.idempotency_key})"
+
+
 class InvoiceSeries(TenantModel):
     """The gap-free numbering counter of one kind of document within a tenant.
 

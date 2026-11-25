@@ -11,6 +11,7 @@ from billing.models import (
     AuditEvent,
     Customer,
     Invoice,
+    InvoiceEmail,
     InvoiceLine,
     InvoiceSeries,
     Payment,
@@ -35,6 +36,7 @@ from billing.services import (
     save_product,
     save_series,
     save_tax_rate,
+    send_invoice,
     update_issuer,
 )
 from core.models import Currency
@@ -717,3 +719,47 @@ def test_a_principal_of_a_cannot_record_a_payment_while_b_is_current(
             record_payment(owner_of(a), payment, [(invoice, 100)])
         assert not Payment.objects.exists()
         assert Invoice.objects.get().status == Invoice.Status.ISSUED
+
+
+def test_b_cannot_email_an_invoice_of_a(tenants: tuple[Tenant, Tenant]) -> None:
+    """Under B, A's issued invoice is not found and no request is stored.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    complete_issuer(a, b)
+    with tenant_context(a.pk):
+        customer = save_customer(owner_of(a), Customer(name="Acme", emails=["ap@a.example"]))
+        draft = save_draft(
+            owner_of(a), Invoice(customer=customer), [DraftLine("Old", Decimal(1), 5)]
+        )
+        issued = issue_invoice(owner_of(a), draft)
+    with tenant_context(b.pk), pytest.raises(Invoice.DoesNotExist):
+        send_invoice(owner_of(b), issued, "k")
+    with tenant_context(b.pk):
+        assert not InvoiceEmail.objects.exists()
+    with tenant_context(a.pk):
+        assert not InvoiceEmail.objects.exists()
+        assert not AuditEvent.objects.filter(action="invoice.send_requested").exists()
+
+
+def test_a_principal_of_a_cannot_email_while_b_is_current(
+    tenants: tuple[Tenant, Tenant],
+) -> None:
+    """A principal of A is refused under B and B's invoice gets no request.
+
+    Args:
+        tenants: Tenants A and B.
+    """
+    a, b = tenants
+    complete_issuer(a, b)
+    with tenant_context(b.pk):
+        customer = save_customer(owner_of(b), Customer(name="Bolt", emails=["ap@b.example"]))
+        draft = save_draft(
+            owner_of(b), Invoice(customer=customer), [DraftLine("Old", Decimal(1), 5)]
+        )
+        issued = issue_invoice(owner_of(b), draft)
+        with pytest.raises(PermissionDenied):
+            send_invoice(owner_of(a), issued, "k")
+        assert not InvoiceEmail.objects.exists()

@@ -23,6 +23,7 @@ from billing.models import (
     AuditEvent,
     Customer,
     Invoice,
+    InvoiceEmail,
     InvoiceLine,
     InvoiceLineTax,
     InvoiceSeries,
@@ -133,6 +134,20 @@ def make_invoice_line_tax() -> TenantModel:
     return tax
 
 
+def make_invoice_email() -> TenantModel:
+    """Create one email request on a new invoice for the active tenant.
+
+    Returns:
+        The saved request.
+    """
+    email: TenantModel = InvoiceEmail.objects.create(
+        invoice=make_invoice(),
+        idempotency_key=f"key-{uuid.uuid4().hex}",
+        recipients=["ap@example.com"],
+    )
+    return email
+
+
 def make_invoice_series() -> TenantModel:
     """Create the invoice series of the active tenant.
 
@@ -179,6 +194,7 @@ FACTORIES: dict[type[TenantModel], Callable[[], TenantModel]] = {
     ProductTaxRate: make_product_tax_rate,
     AuditEvent: make_audit_event,
     Invoice: make_invoice,
+    InvoiceEmail: make_invoice_email,
     InvoiceLine: make_invoice_line,
     InvoiceLineTax: make_invoice_line_tax,
     InvoiceSeries: make_invoice_series,
@@ -229,6 +245,8 @@ def clone_values(model: type[TenantModel]) -> dict[str, Any]:
         return {"kind": Invoice.Kind.CREDIT_NOTE, "prefix": f"CN-{uuid.uuid4().hex[:8]}"}
     if model is PaymentAllocation:
         return {"invoice_id": make_invoice().pk}
+    if model is InvoiceEmail:
+        return {"idempotency_key": f"key-{uuid.uuid4().hex}"}
     if model is Invoice:
         return {"notes": f"clone-{uuid.uuid4().hex}"}
     return {ADMIN_MARKER_FIELDS.get(model, "name"): f"clone-{uuid.uuid4().hex}"}
@@ -413,6 +431,7 @@ SERVICE_ISOLATION_CASES: frozenset[str] = frozenset(
         "billing.services.save_series",
         "billing.services.delete_series",
         "billing.services.record_payment",
+        "billing.services.send_invoice",
     }
 )
 """Dotted names of the service functions that have isolation cases; add every new one here.
@@ -433,7 +452,9 @@ def project_task_names(celery_app: Celery) -> list[str]:
     return sorted(name for name in celery_app.tasks if not name.startswith("celery."))
 
 
-TASK_ISOLATION_CASES: frozenset[str] = frozenset({"billing.tasks.render_invoice_pdf"})
+TASK_ISOLATION_CASES: frozenset[str] = frozenset(
+    {"billing.tasks.render_invoice_pdf", "billing.tasks.send_invoice_email"}
+)
 """Names of the Celery tasks that have isolation cases; add every new task here.
 
 The cases are in test_tasks."""
