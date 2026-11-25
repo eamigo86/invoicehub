@@ -46,12 +46,14 @@ class Principal:
         permissions: Permissions the actor holds in that tenant.
         user_id: Primary key of the acting user, None unless the actor is a member.
         token_id: Primary key of the acting API token, None unless the actor is a token.
+        allow_introspection: Whether the acting token is a development token.
     """
 
     tenant_id: uuid.UUID
     permissions: frozenset[Permission]
     user_id: int | None = None
     token_id: int | None = None
+    allow_introspection: bool = False
 
     @classmethod
     def from_membership(cls, membership: Membership) -> "Principal":
@@ -87,6 +89,7 @@ class Principal:
             token.tenant_id,
             frozenset(Permission(scope) for scope in token.scopes),
             token_id=token.pk,
+            allow_introspection=token.allow_introspection,
         )
 
 

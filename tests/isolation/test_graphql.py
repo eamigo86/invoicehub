@@ -1,6 +1,7 @@
 """The GraphQL endpoint never shows a token the rows of another tenant."""
 
 import json
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -333,3 +334,42 @@ def test_a_cannot_decide_the_proposal_of_b(query: str, root: str) -> None:
     assert state_of(tenant_a, proposal_a) == "pending"
     with tenant_context(tenant_b.pk):
         assert not Payment.objects.filter(source=Payment.Source.BANK).exists()
+
+
+def status_of(query: str, token: str) -> int:
+    """Send a query to the endpoint and return only the HTTP status.
+
+    Args:
+        query: GraphQL document.
+        token: Plaintext API token.
+
+    Returns:
+        The HTTP status code of the response.
+    """
+    return (
+        Client()
+        .post(
+            "/graphql/",
+            data=json.dumps({"query": query}),
+            content_type="application/json",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        .status_code
+    )
+
+
+def test_the_traffic_of_a_never_uses_up_the_rate_limit_of_b(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rate limit counters are per token, so tenant A running out leaves tenant B untouched.
+
+    Args:
+        settings: Pytest-django settings fixture.
+        monkeypatch: Pytest monkeypatch fixture, used to freeze the limiter clock.
+    """
+    settings.GRAPHQL_RATE_LIMIT_PER_MINUTE = 2
+    monkeypatch.setattr("api.ratelimit.time", lambda: 1_800_000_000.0)
+    token_b = tenant_with_token("B")
+    token_a = tenant_with_token("A")
+    assert [status_of(QUERY, token_a) for _ in range(4)] == [200, 200, 429, 429]
+    assert status_of(QUERY, token_b) == 200

@@ -42,6 +42,7 @@ jobs:
       DATABASE_URL: postgres://invoicehub_migrator:migrator-dev-pw@localhost:5432/invoicehub
       DATABASE_APP_ROLE: invoicehub_app
       CELERY_BROKER_URL: redis://localhost:6379/0
+      CACHE_URL: redis://localhost:6379/1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0

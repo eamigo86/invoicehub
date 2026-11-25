@@ -31,6 +31,15 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 CELERY_BROKER_URL: str = env("CELERY_BROKER_URL", default="redis://localhost:6390/0")
 
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        # A different Redis database than the Celery broker.
+        "LOCATION": env("CACHE_URL", default="redis://localhost:6390/1"),
+    }
+}
+GRAPHQL_RATE_LIMIT_PER_MINUTE: int = env.int("GRAPHQL_RATE_LIMIT_PER_MINUTE", default=600)
+
 MAILERS = build_mailers(env("EMAIL_URL", default="consolemail://"))
 DEFAULT_FROM_EMAIL: str = env("DEFAULT_FROM_EMAIL", default="InvoiceHub <no-reply@localhost>")
 
@@ -136,4 +145,11 @@ DJANGO_GRAPHEX = {
     "SCHEMA": "api.schema.schema",
     "DEFAULT_PAGE_SIZE": 50,
     "MAX_PAGE_SIZE": 100,
+    # Depth: the deepest path of the schema is five levels (invoices, results, allocations,
+    # results, payment), so 6 leaves one level of slack. Cost: graphex charges a list wrapper
+    # and its results page both, so the RFC overdue-invoices query with customer, lines and
+    # allocations is rated 51,015,101 for a page of 50 and 102,030,101 for a full page of 100;
+    # the budget fits the full page, and aliasing that shape twice is refused.
+    "MAX_QUERY_DEPTH": 6,
+    "MAX_QUERY_COST": 150_000_000,
 }

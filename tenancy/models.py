@@ -114,6 +114,7 @@ class ApiToken(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
+    allow_introspection = models.BooleanField(default=False)
 
     def __str__(self) -> str:
         """Return the token name.
