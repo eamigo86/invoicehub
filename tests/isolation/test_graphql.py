@@ -14,7 +14,7 @@ from tenancy.context import tenant_context
 from tenancy.models import Membership, Tenant, TenantModel
 from tenancy.permissions import Principal
 from tenancy.tokens import issue_token
-from tests.test_api_actions import ISSUE, SEND, draft_for, issued_invoice
+from tests.test_api_actions import CREDIT, ISSUE, SEND, draft_for, issued_invoice
 from tests.test_api_actions import make_world as make_issuer_world
 from tests.test_api_graphql import make_world as make_invoice_world
 from tests.test_api_mutations import DELETE_DRAFT, SAVE_CUSTOMER, SAVE_DRAFT, catalog
@@ -291,3 +291,15 @@ def test_a_cannot_send_the_invoice_of_b_by_id(enqueued_email: MagicMock) -> None
     for tenant in (tenant_a, tenant_b):
         with tenant_context(tenant.pk):
             assert not InvoiceEmail.objects.exists()
+
+
+def test_a_cannot_draft_a_credit_note_for_the_invoice_of_b() -> None:
+    """Mutation.draftCreditNote with B's invoice id is NOT_FOUND and no credit note appears."""
+    (tenant_a, token_a), (tenant_b, token_b) = two_issuers()
+    invoice_b = issued_invoice(tenant_b, token_b)
+    data = mutate(CREDIT, token_a, input={"invoiceId": invoice_b})["draftCreditNote"]
+    assert data["creditNote"] is None
+    assert [(e["code"], e["field"]) for e in data["errors"]] == [("NOT_FOUND", "invoiceId")]
+    for tenant in (tenant_a, tenant_b):
+        with tenant_context(tenant.pk):
+            assert not Invoice.objects.filter(kind=Invoice.Kind.CREDIT_NOTE).exists()

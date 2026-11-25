@@ -251,3 +251,70 @@ def test_send_invoice_reports_each_refusal_as_a_typed_error(enqueued_email: Magi
     enqueued_email.assert_not_called()
     with tenant_context(tenant.pk):
         assert not InvoiceEmail.objects.exists()
+
+
+CREDIT = f"""
+mutation Credit($input: CreditNoteInput!) {{
+  draftCreditNote(input: $input) {{
+    creditNote {{ id kind status currency subtotal taxTotal total lines {{ totalCount }} }}
+    {ERRORS}
+  }}
+}}
+"""
+
+
+def test_draft_credit_note_without_lines_credits_the_whole_invoice() -> None:
+    """A full credit copies the invoice, leaves it alone, and is issued like any draft."""
+    tenant, token = make_world("A", READ_WRITE)
+    invoice_id = issued_invoice(tenant, token)
+    with tenant_context(tenant.pk):
+        original = Invoice.objects.get(pk=invoice_id)
+    data = run(CREDIT, token, input={"invoiceId": invoice_id})["draftCreditNote"]
+    assert data["errors"] == []
+    note = data["creditNote"]
+    assert (note["kind"], note["status"], note["currency"]) == ("CREDIT_NOTE", "DRAFT", "USD")
+    assert note["total"] == str(original.total)
+    assert note["lines"]["totalCount"] == 2
+    with tenant_context(tenant.pk):
+        stored = Invoice.objects.get(pk=note["id"])
+        assert stored.original_id == original.pk
+        assert Invoice.objects.get(pk=invoice_id).status == Invoice.Status.ISSUED
+    issued = run(ISSUE, token, id=note["id"])["issueInvoice"]
+    assert issued["errors"] == []
+    assert (issued["invoice"]["kind"], issued["invoice"]["status"]) == ("CREDIT_NOTE", "ISSUED")
+
+
+def test_draft_credit_note_with_lines_is_a_partial_credit() -> None:
+    """The lines given are the lines of the note, in the same input as a draft line."""
+    tenant, token = make_world("A", READ_WRITE)
+    invoice_id = issued_invoice(tenant, token)
+    lines = [{"description": "Goodwill", "quantity": "1", "unitPrice": "500"}]
+    data = run(CREDIT, token, input={"invoiceId": invoice_id, "lines": lines})["draftCreditNote"]
+    assert data["errors"] == []
+    assert (data["creditNote"]["total"], data["creditNote"]["lines"]["totalCount"]) == ("500", 1)
+
+
+def test_draft_credit_note_reports_each_refusal_as_a_typed_error() -> None:
+    """A draft original, bad line values, unknown ids and a read-only token."""
+    tenant, token = make_world("A", READ_WRITE)
+    invoice_id = issued_invoice(tenant, token)
+    draft_id = draft_for(tenant, token)
+
+    def credit(token: str = token, **request: Any) -> list[tuple[str, str | None]]:
+        data = run(CREDIT, token, input={"invoiceId": invoice_id, **request})
+        return [(e["code"], e["field"]) for e in data["draftCreditNote"]["errors"]]
+
+    line = {"description": "x", "quantity": "1", "unitPrice": "1"}
+    assert credit(invoiceId=draft_id) == [("INVALID_TRANSITION", None)]
+    assert credit(invoiceId="00000000-0000-0000-0000-000000000000") == [("NOT_FOUND", "invoiceId")]
+    assert credit(invoiceId="abc") == [("VALIDATION_ERROR", "invoiceId")]
+    assert credit(lines=[{**line, "quantity": "1.2345"}]) == [
+        ("VALIDATION_ERROR", "lines[0].quantity")
+    ]
+    assert credit(lines=[{**line, "productId": "999999"}]) == [("NOT_FOUND", "lines[0].productId")]
+    tenant_r, token_r = make_world("R", ["invoices:read"])
+    with tenant_context(tenant_r.pk):
+        readable = str(Invoice.objects.first().pk)  # type: ignore[union-attr]
+    assert credit(token_r, invoiceId=readable) == [("PERMISSION_DENIED", None)]
+    with tenant_context(tenant.pk):
+        assert not Invoice.objects.filter(kind=Invoice.Kind.CREDIT_NOTE).exists()

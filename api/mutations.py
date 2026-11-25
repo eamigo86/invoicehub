@@ -23,12 +23,20 @@ from graphql import (
 )
 
 from api.errors import HANDLED, DomainError, DomainErrorType, NotFound, domain_errors
-from api.inputs import CustomerInput, DraftInvoiceInput, InvoiceReference, SendInvoiceInput
+from api.inputs import (
+    CreditNoteInput,
+    CustomerInput,
+    DraftInvoiceInput,
+    DraftLineInput,
+    InvoiceReference,
+    SendInvoiceInput,
+)
 from api.types import CustomerType, InvoiceType
 from billing.models import Customer, Invoice
 from billing.services import (
     DraftLine,
     delete_draft,
+    draft_credit_note,
     issue_invoice,
     list_customers,
     list_invoices,
@@ -101,6 +109,41 @@ def _find[M: Model](
     if row is None:
         raise NotFound(f"{label} not found.", field_path)
     return row
+
+
+def _draft_lines(principal: Principal | None, lines: list[DraftLineInput]) -> list[DraftLine]:
+    """Resolve the products and tax rates named by input lines into service lines.
+
+    Args:
+        principal: Acting principal, whose read services find the products and tax rates.
+        lines: Lines of the input, in order.
+
+    Returns:
+        The lines for save_draft or draft_credit_note.
+    """
+    result = []
+    for index, line in enumerate(lines):
+        path = f"lines[{index}]"
+        product = (
+            None
+            if line.product_id is None
+            else _find(list_products, principal, line.product_id, f"{path}.productId", "Product")
+        )
+        rates = tuple(
+            _find(list_tax_rates, principal, pk, f"{path}.taxRateIds", "Tax rate")
+            for pk in line.tax_rate_ids
+        )
+        result.append(
+            DraftLine(
+                description=line.description,
+                quantity=line.quantity,
+                unit_price=line.unit_price,
+                discount_bp=line.discount_bp,
+                tax_rates=rates,
+                product=product,
+            )
+        )
+    return result
 
 
 class Payload(PayloadBase):
@@ -202,30 +245,7 @@ class SaveDraftPayload(Payload):
             invoice.currency = data.currency or invoice.currency
             invoice.due_date = data.due_date
             invoice.notes = data.notes
-            lines = []
-            for index, line in enumerate(data.lines):
-                path = f"lines[{index}]"
-                product = (
-                    None
-                    if line.product_id is None
-                    else _find(
-                        list_products, principal, line.product_id, f"{path}.productId", "Product"
-                    )
-                )
-                rates = tuple(
-                    _find(list_tax_rates, principal, pk, f"{path}.taxRateIds", "Tax rate")
-                    for pk in line.tax_rate_ids
-                )
-                lines.append(
-                    DraftLine(
-                        description=line.description,
-                        quantity=line.quantity,
-                        unit_price=line.unit_price,
-                        discount_bp=line.discount_bp,
-                        tax_rates=rates,
-                        product=product,
-                    )
-                )
+            lines = _draft_lines(principal, data.lines)
             return save_draft(principal, invoice, lines)
 
         invoice, errors = _attempt(save)
@@ -333,6 +353,42 @@ class SendInvoicePayload(Payload):
         return cls.reply(invoice=invoice, errors=errors)
 
 
+class DraftCreditNotePayload(Payload):
+    """The credit note that was drafted, or the reasons it was not."""
+
+    # graphex reads a payload field by its camelCase wire name, but stores the value under the
+    # snake_case name, so a multi-word field resolves to null without this resolver.
+    credit_note = field(InvoiceType, resolver=lambda root, info: root.credit_note)
+
+    class Arguments:
+        """Arguments of draftCreditNote."""
+
+        input = _input_argument(CreditNoteInput)
+
+    @classmethod
+    def mutate(cls, root: Any, info: GraphQLResolveInfo[Any], **args: Any) -> Any:
+        """Draft a credit note for an issued invoice, for all of it or the lines given.
+
+        Args:
+            root: Unused root value.
+            info: Resolve info, whose context is the request.
+            **args: Arguments of the field, holding the input.
+
+        Returns:
+            The payload.
+        """
+        principal = request_principal(info.context)
+
+        def draft() -> Invoice:
+            data = CreditNoteInput.model_validate(args["input"])
+            original = _find(list_invoices, principal, data.invoice_id, "invoiceId", "Invoice")
+            lines = None if data.lines is None else _draft_lines(principal, data.lines)
+            return draft_credit_note(principal, original, lines)
+
+        note, errors = _attempt(draft)
+        return cls.reply(credit_note=note, errors=errors)
+
+
 class Mutation(ObjectType):
     """Root mutation type."""
 
@@ -341,3 +397,4 @@ class Mutation(ObjectType):
     delete_draft = DeleteDraftPayload.Field()
     issue_invoice = IssueInvoicePayload.Field()
     send_invoice = SendInvoicePayload.Field()
+    draft_credit_note = DraftCreditNotePayload.Field()

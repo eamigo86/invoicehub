@@ -131,3 +131,12 @@ class SendInvoiceInput(InputType):
     recipients: list[str] | None = None
 
     _check_id = field_validator("id")(_invoice_id)
+
+
+class CreditNoteInput(InputType):
+    """A credit note for an issued invoice; without lines it credits the whole invoice."""
+
+    invoice_id: InvoiceId
+    lines: list[DraftLineInput] | None = None
+
+    _check_invoice = field_validator("invoice_id")(_invoice_id)
