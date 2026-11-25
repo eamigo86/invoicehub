@@ -36,6 +36,7 @@ def issue_token(
     scopes: list[str],
     created_by: User | None = None,
     allow_introspection: bool = False,
+    plaintext: str | None = None,
 ) -> tuple[ApiToken, str]:
     """Issue an API token for the tenant of the acting principal.
 
@@ -47,12 +48,17 @@ def issue_token(
         allow_introspection: Whether this is a development token, which may read the GraphQL
             schema even when DEBUG is off. Introspection is disabled in production except for
             development tokens, so never expose this argument on a tenant-facing path.
+        plaintext: Demo only. A fixed token value for a public demo token, such as the one
+            behind GraphiQL, instead of a random one. It must start with the token prefix.
+            Never expose this argument on a tenant-facing path, since a chosen value can be
+            weak or known.
 
     Returns:
         The stored token and its plaintext, which is never available again.
 
     Raises:
-        ValidationError: When the name is blank or the scopes are empty or not token scopes.
+        ValidationError: When the name is blank, the scopes are empty or not token scopes, or
+            the given plaintext lacks the token prefix.
     """
     require_permission(principal, Permission.TOKENS_MANAGE)
     assert principal is not None
@@ -63,7 +69,10 @@ def issue_token(
         raise ValidationError("A token needs a name.")
     if not unique or not allowed.issuperset(unique):
         raise ValidationError(f"Scopes must be a non-empty subset of {sorted(allowed)}.")
-    plaintext = TOKEN_PREFIX + secrets.token_urlsafe(32)
+    if plaintext is None:
+        plaintext = TOKEN_PREFIX + secrets.token_urlsafe(32)
+    elif not plaintext.startswith(TOKEN_PREFIX):
+        raise ValidationError(f"A token must start with {TOKEN_PREFIX}.")
     token = ApiToken.objects.create(
         tenant_id=principal.tenant_id,
         name=name,

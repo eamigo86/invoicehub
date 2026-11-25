@@ -161,3 +161,23 @@ def test_a_token_is_labelled_by_its_name() -> None:
     principal, _ = admin_of()
     token, _ = issue_token(principal, "ci", [READ])
     assert str(token) == "ci"
+
+
+def test_a_given_plaintext_is_stored_only_as_its_hash() -> None:
+    """The demo path keeps the chosen plaintext out of the database, like a random one."""
+    principal, _ = admin_of()
+    token, plaintext = issue_token(principal, "demo", [READ], plaintext="ih_chosen-demo-value")
+    assert plaintext == "ih_chosen-demo-value"
+    assert token.token_hash == hashlib.sha256(plaintext.encode()).hexdigest()
+    assert authenticate_token(plaintext) == token
+    assert "ih_chosen-demo-value" not in token.token_hash
+
+
+def test_a_given_plaintext_still_needs_tokens_manage_and_the_prefix() -> None:
+    """A principal without tokens:manage is refused, and a value that cannot authenticate too."""
+    principal, _ = admin_of()
+    with pytest.raises(PermissionDenied):
+        issue_token(None, "demo", [READ], plaintext="ih_chosen-demo-value")
+    with pytest.raises(ValidationError):
+        issue_token(principal, "demo", [READ], plaintext="no-prefix")
+    assert not ApiToken.objects.exists()
